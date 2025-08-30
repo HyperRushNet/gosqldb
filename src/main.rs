@@ -1,5 +1,5 @@
 use axum::{
-    extract::Query,
+    extract::{Query, State},
     routing::{get, post},
     Json, Router, http::StatusCode,
 };
@@ -17,10 +17,9 @@ struct Item {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let db_url = "sqlite://data.db";
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
-        .connect(db_url)
+        .connect("sqlite://data.db")
         .await?;
 
     // Initialize table
@@ -47,7 +46,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn add_item(
-    axum::extract::State(pool): axum::extract::State<SqlitePool>,
+    State(pool): State<SqlitePool>,
     Json(mut item): Json<Item>,
 ) -> Result<Json<Item>, (StatusCode, String)> {
     if item.id.is_empty() {
@@ -72,7 +71,7 @@ struct GetQuery {
 }
 
 async fn get_item(
-    axum::extract::State(pool): axum::extract::State<SqlitePool>,
+    State(pool): State<SqlitePool>,
     Query(query): Query<GetQuery>,
 ) -> Result<Json<Item>, (StatusCode, String)> {
     let row = sqlx::query!("SELECT id, type, payload FROM items WHERE id = ?", query.id)
