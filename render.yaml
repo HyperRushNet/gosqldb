@@ -1,9 +1,8 @@
 services:
   - type: web
-    name: rdb
+    name: rdb-service
     env: docker
     plan: free
-    dockerfilePath: Dockerfile
+    dockerfilePath: ./Dockerfile
+    port: 8080
     autoDeploy: true
-    ports:
-      - port: 8080
