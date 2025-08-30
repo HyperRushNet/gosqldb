@@ -2,8 +2,8 @@
 FROM golang:1.21-alpine AS build
 WORKDIR /app
 
-# Installeer C compiler en SQLite dev libs
-RUN apk add --no-cache gcc musl-dev sqlite-dev
+# Installeer C compiler, SQLite dev libs en git
+RUN apk add --no-cache gcc musl-dev sqlite-dev git
 
 COPY go.mod ./
 COPY main.go ./
