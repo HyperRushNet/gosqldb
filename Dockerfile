@@ -1,23 +1,20 @@
 # Stage 1: Build
-FROM rust:nightly as builder
+FROM rust:1.81 as builder
 WORKDIR /app
 
-# Kopieer Cargo.toml en source code
-COPY Cargo.toml ./
+# Kopieer de bronbestanden
+COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 
-# Build release (edition 2024 ondersteund)
+# Build in release mode
 RUN cargo build --release
 
 # Stage 2: Minimal runtime
 FROM debian:bookworm-slim
 WORKDIR /app
 
-# Kopieer het gecompileerde binaire bestand
-COPY --from=builder /app/target/release/your_binary_name ./your_binary_name
+# Kopieer de binaire van de builder
+COPY --from=builder /app/target/release/rdb ./rdb
 
-# Expose poort (pas aan naar jouw app)
 EXPOSE 8080
-
-# Start de app
-CMD ["./your_binary_name"]
+CMD ["./rdb"]
