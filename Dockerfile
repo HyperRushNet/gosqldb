@@ -1,28 +1,23 @@
-# Builder stage
-FROM rust:1.80-bullseye AS builder
+# Stage 1: Build
+FROM rust:1.73 as builder
 WORKDIR /app
 
-# Installeer SQLite dev libraries
-RUN apt-get update && apt-get install -y libsqlite3-dev pkg-config && rm -rf /var/lib/apt/lists/*
-
-# Kopieer Cargo bestanden
-COPY Cargo.toml Cargo.lock ./
+# Kopieer alleen Cargo.toml en source
+COPY Cargo.toml ./
 COPY src ./src
 
-# Build in release mode
+# Build release
 RUN cargo build --release
 
-# Runtime stage
+# Stage 2: Minimal runtime
 FROM debian:bookworm-slim
 WORKDIR /app
 
-# Install SQLite runtime libraries
-RUN apt-get update && apt-get install -y libsqlite3-0 && rm -rf /var/lib/apt/lists/*
+# Kopieer het gecompileerde binaire bestand
+COPY --from=builder /app/target/release/your_binary_name ./your_binary_name
 
-# Kopieer binary van builder
-COPY --from=builder /app/target/release/rdb /app/rdb
-
-# Expose poort
+# Expose poort (pas aan indien nodig)
 EXPOSE 8080
 
-CMD ["./rdb"]
+# Start de app
+CMD ["./your_binary_name"]
