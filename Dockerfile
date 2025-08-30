@@ -1,27 +1,28 @@
 # Stage 1: Build
 FROM rust:1.79 as builder
-
 WORKDIR /app
 
-# Alleen Cargo.toml kopiëren
-COPY Cargo.toml ./
+# Dependencies kopiëren en builden
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir src && echo "fn main() {}" > src/main.rs
+RUN cargo fetch
 
-# Source code kopiëren
+# Broncode kopiëren
 COPY src ./src
-
-# Build de release (Cargo genereert automatisch Cargo.lock)
 RUN cargo build --release
 
 # Stage 2: Minimal runtime
 FROM debian:bookworm-slim
-
 WORKDIR /app
 
-# Kopieer het gecompileerde binaire bestand van de builder
-COPY --from=builder /app/target/release/rdb /app/rdb
+# Nodige libraries
+RUN apt-get update && apt-get install -y libsqlite3-0 && rm -rf /var/lib/apt/lists/*
 
-# Expose de poort (pas aan indien nodig)
-EXPOSE 8080
+# Binaire van stage 1 kopiëren
+COPY --from=builder /app/target/release/rdb_sql .
 
-# Run het binaire bestand
-CMD ["./rdb"]
+# SQLite database bestand
+VOLUME ["/app/data.db"]
+
+# Run de app
+CMD ["./rdb_sql"]
