@@ -1,15 +1,15 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import sqlite3
 
 app = FastAPI()
 DB_FILE = "data.db"
 
 # Enable CORS
-origins = ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],  # alles toestaan
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -30,37 +30,24 @@ def init_db():
 
 init_db()
 
-# Bulk insert (gebruik transactions voor speed)
-def bulk_insert(items):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("BEGIN TRANSACTION;")
-    c.executemany("INSERT INTO items (name) VALUES (?)", [(i,) for i in items])
-    conn.commit()
-    conn.close()
+class Item(BaseModel):
+    name: str
 
 @app.get("/items")
-def get_items(limit: int = 100):
+def get_items():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("SELECT id, name FROM items LIMIT ?", (limit,))
+    c.execute("SELECT id, name FROM items")
     rows = c.fetchall()
     conn.close()
     return [{"id": r[0], "name": r[1]} for r in rows]
 
 @app.post("/items")
-def add_item(name: str):
+def add_item(item: Item):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("INSERT INTO items (name) VALUES (?)", (name,))
+    c.execute("INSERT INTO items (name) VALUES (?)", (item.name,))
     conn.commit()
     item_id = c.lastrowid
     conn.close()
-    return {"id": item_id, "name": name}
-
-@app.post("/bulk")
-def add_bulk(count: int = 1000):
-    """Voeg bulk items toe, default 1000"""
-    items = [f"Item {i}" for i in range(count)]
-    bulk_insert(items)
-    return {"added": count}
+    return {"id": item_id, "name": item.name}
