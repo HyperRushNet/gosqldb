@@ -1,20 +1,21 @@
-from fastapi import FastAPI, HTTPException, Response, Request
+from fastapi import FastAPI, HTTPException, Response, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import sqlite3
 import secrets
 import time
+import base64
 
 app = FastAPI()
 DB_FILE = "data.db"
 
-# --- CORS: open voor alle domeinen ---
+# --- CORS ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],        # Alle origins toegestaan
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],        # GET, POST, PUT, DELETE etc.
-    allow_headers=["*"],        # Content-Type, Authorization etc.
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # --- Models ---
@@ -24,13 +25,14 @@ class ItemIn(BaseModel):
 class ItemUpdate(BaseModel):
     name: str
 
-# --- Database init ---
+# --- DB init ---
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS items (
             id TEXT PRIMARY KEY,
-            name TEXT NOT NULL
+            name TEXT NOT NULL,
+            photo TEXT
         )
     """)
     conn.commit()
@@ -50,10 +52,9 @@ def generate_id():
     conn.close()
     return rand_id
 
-# --- Rate limiting: 25 req/sec per client ---
+# --- Rate limiting ---
 VISITS = {}
 MAX_REQ = 25
-
 @app.middleware("http")
 async def rate_limit(request: Request, call_next):
     client = request.client.host
@@ -65,19 +66,23 @@ async def rate_limit(request: Request, call_next):
     VISITS[client].append(now)
     return await call_next(request)
 
-# --- Ultra-light ping endpoint ---
+# --- Ping ---
 PING_RESPONSE = Response(status_code=204)
 @app.get("/ping")
 def ping():
     return PING_RESPONSE
 
-# --- CRUD Endpoints ---
+# --- CRUD with photo ---
 
 @app.post("/items")
-def add_item(item: ItemIn):
+async def add_item(name: str = "", photo: UploadFile = File(None)):
     item_id = generate_id()
+    photo_data = None
+    if photo:
+        photo_bytes = await photo.read()
+        photo_data = base64.b64encode(photo_bytes).decode("utf-8")
     conn = sqlite3.connect(DB_FILE)
-    conn.execute("INSERT INTO items (id, name) VALUES (?, ?)", (item_id, item.name))
+    conn.execute("INSERT INTO items (id, name, photo) VALUES (?, ?, ?)", (item_id, name, photo_data))
     conn.commit()
     conn.close()
     return {"id": item_id}
@@ -86,12 +91,13 @@ def add_item(item: ItemIn):
 def get_item(item_id: str):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("SELECT name FROM items WHERE id=?", (item_id,))
+    c.execute("SELECT name, photo FROM items WHERE id=?", (item_id,))
     row = c.fetchone()
     conn.close()
     if not row:
         raise HTTPException(404, "Item not found")
-    return {"id": item_id, "name": row[0]}
+    name, photo_data = row
+    return {"id": item_id, "name": name, "photo": photo_data}
 
 @app.delete("/items/{item_id}")
 def delete_item(item_id: str):
@@ -102,16 +108,22 @@ def delete_item(item_id: str):
     return {"status": "ok"}
 
 @app.put("/items/{item_id}")
-def update_item(item_id: str, item: ItemUpdate):
+async def update_item(item_id: str, name: str = "", photo: UploadFile = File(None)):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("UPDATE items SET name=? WHERE id=?", (item.name, item_id))
+    photo_data = None
+    if photo:
+        photo_bytes = await photo.read()
+        photo_data = base64.b64encode(photo_bytes).decode("utf-8")
+        c.execute("UPDATE items SET name=?, photo=? WHERE id=?", (name, photo_data, item_id))
+    else:
+        c.execute("UPDATE items SET name=? WHERE id=?", (name, item_id))
     conn.commit()
     updated = c.rowcount
     conn.close()
     if not updated:
         raise HTTPException(404, "Item not found")
-    return {"id": item_id, "name": item.name}
+    return {"id": item_id, "name": name}
 
 @app.get("/items")
 def list_item_ids():
