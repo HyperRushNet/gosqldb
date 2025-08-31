@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from typing import Optional
 import uuid
 
@@ -20,6 +21,11 @@ items = {}
 @app.get("/")
 def read_root():
     return {"message": "Backend is running"}
+
+# ✅ Healthcheck: 204 No Content
+@app.get("/ping", status_code=204)
+def ping():
+    return Response(status_code=204)
 
 # ✅ Alle items ophalen
 @app.get("/items")
