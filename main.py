@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import sqlite3
+import secrets
 
 app = FastAPI()
 DB_FILE = "data.db"
@@ -15,7 +16,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Data models
+# Models
 class ItemIn(BaseModel):
     name: str
 
@@ -25,7 +26,7 @@ def init_db():
     c = conn.cursor()
     c.execute("""
         CREATE TABLE IF NOT EXISTS items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id TEXT PRIMARY KEY,
             name TEXT NOT NULL
         )
     """)
@@ -34,43 +35,44 @@ def init_db():
 
 init_db()
 
-# List items with preview
-@app.get("/items")
-def get_items(limit: int = 50, offset: int = 0, preview_len: int = 200):
+# Generate a unique random ID
+def generate_unique_id():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("SELECT id, SUBSTR(name,1,?) as preview FROM items LIMIT ? OFFSET ?", 
-              (preview_len, limit, offset))
-    rows = c.fetchall()
+    while True:
+        rand_id = secrets.token_hex(16)  # 32-char hex string
+        c.execute("SELECT 1 FROM items WHERE id=?", (rand_id,))
+        if not c.fetchone():
+            break
     conn.close()
-    return [{"id": r[0], "preview": r[1]} for r in rows]
-
-# Get full item
-@app.get("/items/{item_id}")
-def get_item(item_id: int):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT id, name FROM items WHERE id=?", (item_id,))
-    row = c.fetchone()
-    conn.close()
-    if not row:
-        raise HTTPException(status_code=404, detail="Item not found")
-    return {"id": row[0], "name": row[1]}
+    return rand_id
 
 # Add item
 @app.post("/items")
 def add_item(item: ItemIn):
+    item_id = generate_unique_id()
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("INSERT INTO items (name) VALUES (?)", (item.name,))
+    c.execute("INSERT INTO items (id, name) VALUES (?, ?)", (item_id, item.name))
     conn.commit()
-    item_id = c.lastrowid
     conn.close()
-    return {"id": item_id, "preview": item.name[:200]}
+    return {"id": item_id}
 
-# Delete item
+# Get item by ID
+@app.get("/items/{item_id}")
+def get_item(item_id: str):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT name FROM items WHERE id=?", (item_id,))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return {"id": item_id, "name": row[0]}
+
+# Delete item by ID
 @app.delete("/items/{item_id}")
-def delete_item(item_id: int):
+def delete_item(item_id: str):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("DELETE FROM items WHERE id=?", (item_id,))
