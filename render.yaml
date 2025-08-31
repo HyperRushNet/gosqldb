@@ -1,6 +1,7 @@
 services:
   - type: web
-    name: sqlite-api
-    env: docker
-    dockerfilePath: ./Dockerfile
-    port: 10000
+    name: fastapi-app
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
