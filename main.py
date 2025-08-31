@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import sqlite3
@@ -79,3 +79,8 @@ def delete_item(item_id: str):
     conn.commit()
     conn.close()
     return {"status": "ok"}
+
+# --- NEW: Ping endpoint ---
+@app.get("/ping")
+def ping():
+    return Response(status_code=204)
