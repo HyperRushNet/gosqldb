@@ -6,7 +6,7 @@ app = FastAPI()
 DB_FILE = "data.db"
 
 # Enable CORS
-origins = ["*"]  # alles toestaan; voor productie kun je specifieke domains zetten
+origins = ["*"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -30,11 +30,20 @@ def init_db():
 
 init_db()
 
-@app.get("/items")
-def get_items():
+# Bulk insert (gebruik transactions voor speed)
+def bulk_insert(items):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("SELECT id, name FROM items")
+    c.execute("BEGIN TRANSACTION;")
+    c.executemany("INSERT INTO items (name) VALUES (?)", [(i,) for i in items])
+    conn.commit()
+    conn.close()
+
+@app.get("/items")
+def get_items(limit: int = 100):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT id, name FROM items LIMIT ?", (limit,))
     rows = c.fetchall()
     conn.close()
     return [{"id": r[0], "name": r[1]} for r in rows]
@@ -48,3 +57,10 @@ def add_item(name: str):
     item_id = c.lastrowid
     conn.close()
     return {"id": item_id, "name": name}
+
+@app.post("/bulk")
+def add_bulk(count: int = 1000):
+    """Voeg bulk items toe, default 1000"""
+    items = [f"Item {i}" for i in range(count)]
+    bulk_insert(items)
+    return {"added": count}
