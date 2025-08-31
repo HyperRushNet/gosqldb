@@ -1,5 +1,6 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import sqlite3
 
 app = FastAPI()
@@ -13,6 +14,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Pydantic models voor POST body
+class Item(BaseModel):
+    name: str
+
+class ItemDelete(BaseModel):
+    id: int
 
 # Initialize DB
 def init_db():
@@ -29,7 +37,7 @@ def init_db():
 
 init_db()
 
-# List items with pagination
+# List items (GET, met skip/limit voor pagination)
 @app.get("/items")
 def get_items(skip: int = 0, limit: int = 100):
     conn = sqlite3.connect(DB_FILE)
@@ -39,23 +47,23 @@ def get_items(skip: int = 0, limit: int = 100):
     conn.close()
     return [{"id": r[0], "name": r[1]} for r in rows]
 
-# Add item
+# Add item (POST, naam in body)
 @app.post("/items")
-def add_item(name: str = Query(...)):
+def add_item(item: Item):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("INSERT INTO items (name) VALUES (?)", (name,))
+    c.execute("INSERT INTO items (name) VALUES (?)", (item.name,))
     conn.commit()
     item_id = c.lastrowid
     conn.close()
-    return {"id": item_id, "name": name}
+    return {"id": item_id, "name": item.name}
 
-# Delete item
+# Delete item (POST, id in body)
 @app.post("/items/delete")
-def delete_item(id: int = Query(...)):
+def delete_item(item: ItemDelete):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("DELETE FROM items WHERE id = ?", (id,))
+    c.execute("DELETE FROM items WHERE id = ?", (item.id,))
     conn.commit()
     conn.close()
     return {"status": "ok"}
