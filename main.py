@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Response, Request, UploadFile, File
+from fastapi import FastAPI, HTTPException, Response, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import sqlite3
@@ -19,9 +19,6 @@ app.add_middleware(
 )
 
 # --- Models ---
-class ItemIn(BaseModel):
-    name: str
-
 class ItemUpdate(BaseModel):
     name: str
 
@@ -72,17 +69,23 @@ PING_RESPONSE = Response(status_code=204)
 def ping():
     return PING_RESPONSE
 
-# --- CRUD with photo ---
+# --- CRUD endpoints with photo ---
 
 @app.post("/items")
-async def add_item(name: str = "", photo: UploadFile = File(None)):
+async def add_item(
+    name: str = Form(...),
+    photo: UploadFile = File(None)
+):
     item_id = generate_id()
     photo_data = None
     if photo:
         photo_bytes = await photo.read()
         photo_data = base64.b64encode(photo_bytes).decode("utf-8")
     conn = sqlite3.connect(DB_FILE)
-    conn.execute("INSERT INTO items (id, name, photo) VALUES (?, ?, ?)", (item_id, name, photo_data))
+    conn.execute(
+        "INSERT INTO items (id, name, photo) VALUES (?, ?, ?)",
+        (item_id, name, photo_data)
+    )
     conn.commit()
     conn.close()
     return {"id": item_id}
@@ -99,16 +102,12 @@ def get_item(item_id: str):
     name, photo_data = row
     return {"id": item_id, "name": name, "photo": photo_data}
 
-@app.delete("/items/{item_id}")
-def delete_item(item_id: str):
-    conn = sqlite3.connect(DB_FILE)
-    conn.execute("DELETE FROM items WHERE id=?", (item_id,))
-    conn.commit()
-    conn.close()
-    return {"status": "ok"}
-
 @app.put("/items/{item_id}")
-async def update_item(item_id: str, name: str = "", photo: UploadFile = File(None)):
+async def update_item(
+    item_id: str,
+    name: str = Form(...),
+    photo: UploadFile = File(None)
+):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     photo_data = None
@@ -124,6 +123,14 @@ async def update_item(item_id: str, name: str = "", photo: UploadFile = File(Non
     if not updated:
         raise HTTPException(404, "Item not found")
     return {"id": item_id, "name": name}
+
+@app.delete("/items/{item_id}")
+def delete_item(item_id: str):
+    conn = sqlite3.connect(DB_FILE)
+    conn.execute("DELETE FROM items WHERE id=?", (item_id,))
+    conn.commit()
+    conn.close()
+    return {"status": "ok"}
 
 @app.get("/items")
 def list_item_ids():
