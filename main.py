@@ -1,8 +1,9 @@
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import sqlite3
 import secrets
+import logging
 
 app = FastAPI()
 DB_FILE = "data.db"
@@ -80,7 +81,21 @@ def delete_item(item_id: str):
     conn.close()
     return {"status": "ok"}
 
-# --- NEW: Ping endpoint ---
+
+# --- Ultra-light PING endpoint ---
+PING_RESPONSE = Response(status_code=204)
+
 @app.get("/ping")
 def ping():
-    return Response(status_code=204)
+    # Re-use the same Response object: no CPU, no body, ~200 bytes total
+    return PING_RESPONSE
+
+
+# --- Middleware: skip logs for /ping (saves I/O) ---
+@app.middleware("http")
+async def ignore_ping_logs(request: Request, call_next):
+    if request.url.path == "/ping":
+        logging.getLogger("uvicorn.access").disabled = True
+    else:
+        logging.getLogger("uvicorn.access").disabled = False
+    return await call_next(request)
