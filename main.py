@@ -1,12 +1,11 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-import aiosqlite
-import asyncio
+import sqlite3
 
 app = FastAPI()
 DB_FILE = "data.db"
 
-# CORS
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,54 +14,48 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global connection
-db_conn: aiosqlite.Connection = None
-
-@app.on_event("startup")
-async def startup():
-    global db_conn
-    db_conn = await aiosqlite.connect(DB_FILE)
-    await db_conn.execute("PRAGMA journal_mode=WAL;")
-    await db_conn.execute("""
+# Initialize DB
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("""
         CREATE TABLE IF NOT EXISTS items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL
-        );
+        )
     """)
-    await db_conn.execute("CREATE INDEX IF NOT EXISTS idx_name ON items(name);")
-    await db_conn.commit()
+    conn.commit()
+    conn.close()
 
-@app.on_event("shutdown")
-async def shutdown():
-    await db_conn.close()
+init_db()
 
+# List items with pagination
 @app.get("/items")
-async def get_items():
-    cursor = await db_conn.execute("SELECT id, name FROM items")
-    rows = await cursor.fetchall()
-    await cursor.close()
+def get_items(skip: int = 0, limit: int = 100):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT id, name FROM items ORDER BY id DESC LIMIT ? OFFSET ?", (limit, skip))
+    rows = c.fetchall()
+    conn.close()
     return [{"id": r[0], "name": r[1]} for r in rows]
 
+# Add item
 @app.post("/items")
-async def add_item(name: str = Query(...), full: bool = Query(False)):
-    cursor = await db_conn.execute("INSERT INTO items (name) VALUES (?)", (name,))
-    if full:
-        await db_conn.commit()
-        cursor2 = await db_conn.execute("SELECT id, name FROM items")
-        rows = await cursor2.fetchall()
-        await cursor2.close()
-        return [{"id": r[0], "name": r[1]} for r in rows]
-    await db_conn.commit()
-    return {"status": "ok"}
+def add_item(name: str = Query(...)):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("INSERT INTO items (name) VALUES (?)", (name,))
+    conn.commit()
+    item_id = c.lastrowid
+    conn.close()
+    return {"id": item_id, "name": name}
 
-@app.delete("/items")
-async def delete_item(id: int = Query(...), full: bool = Query(False)):
-    await db_conn.execute("DELETE FROM items WHERE id = ?", (id,))
-    if full:
-        await db_conn.commit()
-        cursor = await db_conn.execute("SELECT id, name FROM items")
-        rows = await cursor.fetchall()
-        await cursor.close()
-        return [{"id": r[0], "name": r[1]} for r in rows]
-    await db_conn.commit()
+# Delete item
+@app.post("/items/delete")
+def delete_item(id: int = Query(...)):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("DELETE FROM items WHERE id = ?", (id,))
+    conn.commit()
+    conn.close()
     return {"status": "ok"}
