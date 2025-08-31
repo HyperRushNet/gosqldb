@@ -15,12 +15,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Pydantic models voor POST body
-class Item(BaseModel):
+# Data models
+class ItemIn(BaseModel):
     name: str
-
-class ItemDelete(BaseModel):
-    id: int
 
 # Initialize DB
 def init_db():
@@ -37,33 +34,46 @@ def init_db():
 
 init_db()
 
-# List items (GET, met skip/limit voor pagination)
+# List items with preview
 @app.get("/items")
-def get_items(skip: int = 0, limit: int = 100):
+def get_items(limit: int = 50, offset: int = 0, preview_len: int = 200):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("SELECT id, name FROM items ORDER BY id DESC LIMIT ? OFFSET ?", (limit, skip))
+    c.execute("SELECT id, SUBSTR(name,1,?) as preview FROM items LIMIT ? OFFSET ?", 
+              (preview_len, limit, offset))
     rows = c.fetchall()
     conn.close()
-    return [{"id": r[0], "name": r[1]} for r in rows]
+    return [{"id": r[0], "preview": r[1]} for r in rows]
 
-# Add item (POST, naam in body)
+# Get full item
+@app.get("/items/{item_id}")
+def get_item(item_id: int):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT id, name FROM items WHERE id=?", (item_id,))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return {"id": row[0], "name": row[1]}
+
+# Add item
 @app.post("/items")
-def add_item(item: Item):
+def add_item(item: ItemIn):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("INSERT INTO items (name) VALUES (?)", (item.name,))
     conn.commit()
     item_id = c.lastrowid
     conn.close()
-    return {"id": item_id, "name": item.name}
+    return {"id": item_id, "preview": item.name[:200]}
 
-# Delete item (POST, id in body)
-@app.post("/items/delete")
-def delete_item(item: ItemDelete):
+# Delete item
+@app.delete("/items/{item_id}")
+def delete_item(item_id: int):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("DELETE FROM items WHERE id = ?", (item.id,))
+    c.execute("DELETE FROM items WHERE id=?", (item_id,))
     conn.commit()
     conn.close()
     return {"status": "ok"}
