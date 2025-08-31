@@ -8,12 +8,13 @@ import time
 app = FastAPI()
 DB_FILE = "data.db"
 
-# --- CORS ---
+# --- CORS: open voor alle domeinen ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["*"],        # Alle origins toegestaan
+    allow_credentials=True,
+    allow_methods=["*"],        # GET, POST, PUT, DELETE etc.
+    allow_headers=["*"],        # Content-Type, Authorization etc.
 )
 
 # --- Models ---
@@ -23,7 +24,7 @@ class ItemIn(BaseModel):
 class ItemUpdate(BaseModel):
     name: str
 
-# --- DB init ---
+# --- Database init ---
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     conn.execute("""
@@ -49,9 +50,10 @@ def generate_id():
     conn.close()
     return rand_id
 
-# --- Rate limiting (25 req/sec per client) ---
+# --- Rate limiting: 25 req/sec per client ---
 VISITS = {}
 MAX_REQ = 25
+
 @app.middleware("http")
 async def rate_limit(request: Request, call_next):
     client = request.client.host
@@ -63,13 +65,14 @@ async def rate_limit(request: Request, call_next):
     VISITS[client].append(now)
     return await call_next(request)
 
-# --- Ultra-light ping ---
+# --- Ultra-light ping endpoint ---
 PING_RESPONSE = Response(status_code=204)
 @app.get("/ping")
 def ping():
     return PING_RESPONSE
 
-# --- CRUD / Search / Health ---
+# --- CRUD Endpoints ---
+
 @app.post("/items")
 def add_item(item: ItemIn):
     item_id = generate_id()
