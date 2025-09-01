@@ -1,7 +1,6 @@
 from fastapi import FastAPI, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
-from typing import Optional
 import uuid
 
 app = FastAPI()
@@ -32,19 +31,15 @@ def ping():
 def get_items():
     return list(items.values())
 
-# ✅ Nieuw item toevoegen (met tekst + foto)
+# ✅ Nieuw item toevoegen (alleen tekst → "payload")
 @app.post("/items")
-async def create_item(
-    name: str = Form(...),
-    photo: Optional[str] = Form(None)
-):
+async def create_item(payload: str = Form(...)):
     item_id = str(uuid.uuid4())
     items[item_id] = {
         "id": item_id,
-        "name": name,
-        "photo": photo  # Base64 string of None
+        "payload": payload
     }
-    return items[item_id]   # ⬅️ altijd volledig object terug
+    return items[item_id]
 
 # ✅ Item verwijderen
 @app.delete("/items/{item_id}")
