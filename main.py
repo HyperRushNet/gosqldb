@@ -17,11 +17,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory store (bytes, direct)
+# In-memory store voor bytes
 _items: Dict[str, bytes] = {}
 _lock = asyncio.Lock()  # protect writes only
 
-MAX_PAYLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_PAYLOAD_SIZE = 50 * 1024 * 1024  # 50 MB, optioneel groter
 
 @app.get("/")
 async def root():
@@ -33,24 +33,25 @@ async def ping():
 
 @app.get("/items")
 async def get_items():
-    # Lock-free read, alleen keys
+    # Lock-free read van keys
     return ORJSONResponse(list(_items.keys()))
 
 @app.post("/items")
 async def create_item(request: Request):
     # Stream upload direct naar bytes (geen decode)
     size = 0
-    body = bytearray()
-    
+    chunks = []
+
     async for chunk in request.stream():
         size += len(chunk)
         if size > MAX_PAYLOAD_SIZE:
             raise HTTPException(status_code=413, detail="Payload too large")
-        body.extend(chunk)
+        chunks.append(chunk)
 
     item_id = str(uuid.uuid4())
     async with _lock:
-        _items[item_id] = bytes(body)  # direct opslaan als bytes
+        # Sla direct bytes op zonder kopieën
+        _items[item_id] = b"".join(chunks)
 
     return ORJSONResponse({"id": item_id})
 
@@ -60,8 +61,8 @@ async def get_item(item_id: str):
     if payload is None:
         raise HTTPException(status_code=404, detail="Item not found")
 
-    # Stream direct uit bytes → geen extra RAM/CPU
-    return StreamingResponse(iter([payload]), media_type="text/plain")
+    # Stream direct uit bytes → minimale overhead
+    return StreamingResponse(iter([payload]), media_type="application/octet-stream")
 
 @app.delete("/items/{item_id}")
 async def delete_item(item_id: str):
