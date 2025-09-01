@@ -4,8 +4,7 @@ from typing import Dict
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import ORJSONResponse, PlainTextResponse, StreamingResponse
-import io
+from fastapi.responses import ORJSONResponse, StreamingResponse
 
 app = FastAPI()
 
@@ -18,8 +17,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory store
-_items: Dict[str, str] = {}
+# In-memory store (bytes, direct)
+_items: Dict[str, bytes] = {}
 _lock = asyncio.Lock()  # protect writes only
 
 MAX_PAYLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
@@ -30,27 +29,29 @@ async def root():
 
 @app.get("/ping", status_code=204)
 async def ping():
-    return PlainTextResponse(status_code=204)
+    return ORJSONResponse(status_code=204)
 
 @app.get("/items")
 async def get_items():
-    # Lock-free read
+    # Lock-free read, alleen keys
     return ORJSONResponse(list(_items.keys()))
 
 @app.post("/items")
 async def create_item(request: Request):
-    # Direct body bytes, geen JSON parsing
-    body_bytes = await request.body()
-    if len(body_bytes) > MAX_PAYLOAD_SIZE:
-        raise HTTPException(status_code=413, detail="Payload too large")
-    payload = body_bytes.decode("utf-8")
+    # Stream upload direct naar bytes (geen decode)
+    size = 0
+    body = bytearray()
+    
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > MAX_PAYLOAD_SIZE:
+            raise HTTPException(status_code=413, detail="Payload too large")
+        body.extend(chunk)
 
     item_id = str(uuid.uuid4())
-    # Lock alleen voor schrijven
     async with _lock:
-        _items[item_id] = payload
+        _items[item_id] = bytes(body)  # direct opslaan als bytes
 
-    # Return alleen ID, geen payload → geen extra CPU
     return ORJSONResponse({"id": item_id})
 
 @app.get("/items/{item_id}")
@@ -59,8 +60,8 @@ async def get_item(item_id: str):
     if payload is None:
         raise HTTPException(status_code=404, detail="Item not found")
 
-    # Stream de string direct naar client
-    return StreamingResponse(io.BytesIO(payload.encode("utf-8")), media_type="text/plain")
+    # Stream direct uit bytes → geen extra RAM/CPU
+    return StreamingResponse(iter([payload]), media_type="text/plain")
 
 @app.delete("/items/{item_id}")
 async def delete_item(item_id: str):
