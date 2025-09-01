@@ -1,10 +1,11 @@
-import asyncio
 import uuid
+import asyncio
 from typing import Dict
 
-from fastapi import FastAPI, Request, Response, HTTPException
-from fastapi.responses import ORJSONResponse, PlainTextResponse
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import ORJSONResponse, PlainTextResponse, StreamingResponse
+import io
 
 app = FastAPI()
 
@@ -19,7 +20,7 @@ app.add_middleware(
 
 # In-memory store
 _items: Dict[str, str] = {}
-_lock = asyncio.Lock()  # protect writes
+_lock = asyncio.Lock()  # protect writes only
 
 MAX_PAYLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
 
@@ -29,41 +30,37 @@ async def root():
 
 @app.get("/ping", status_code=204)
 async def ping():
-    return Response(status_code=204)
+    return PlainTextResponse(status_code=204)
 
 @app.get("/items")
 async def get_items():
+    # Lock-free read
     return ORJSONResponse(list(_items.keys()))
 
 @app.post("/items")
 async def create_item(request: Request):
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    payload = body.get("payload")
-    if not isinstance(payload, str) or payload == "":
-        raise HTTPException(status_code=400, detail="payload must be a non-empty string")
-
-    # Check payload size (in bytes)
-    size_bytes = len(payload.encode("utf-8"))
-    if size_bytes > MAX_PAYLOAD_SIZE:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Payload too large: {size_bytes} bytes (max {MAX_PAYLOAD_SIZE} bytes)"
-        )
+    # Direct body bytes, geen JSON parsing
+    body_bytes = await request.body()
+    if len(body_bytes) > MAX_PAYLOAD_SIZE:
+        raise HTTPException(status_code=413, detail="Payload too large")
+    payload = body_bytes.decode("utf-8")
 
     item_id = str(uuid.uuid4())
+    # Lock alleen voor schrijven
     async with _lock:
         _items[item_id] = payload
-    return ORJSONResponse({"id": item_id, "payload": payload})
+
+    # Return alleen ID, geen payload → geen extra CPU
+    return ORJSONResponse({"id": item_id})
 
 @app.get("/items/{item_id}")
 async def get_item(item_id: str):
     payload = _items.get(item_id)
     if payload is None:
         raise HTTPException(status_code=404, detail="Item not found")
-    return PlainTextResponse(payload)
+
+    # Stream de string direct naar client
+    return StreamingResponse(io.BytesIO(payload.encode("utf-8")), media_type="text/plain")
 
 @app.delete("/items/{item_id}")
 async def delete_item(item_id: str):
