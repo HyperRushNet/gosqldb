@@ -15,7 +15,7 @@ app.add_middleware(
 )
 
 # Simpele in-memory opslag (reset bij server restart)
-items = {}
+items = {}  # { id: payload }
 
 @app.get("/")
 def read_root():
@@ -26,20 +26,24 @@ def read_root():
 def ping():
     return Response(status_code=204)
 
-# ✅ Alle items ophalen
+# ✅ Alle items ophalen → alleen IDs
 @app.get("/items")
 def get_items():
-    return list(items.values())
+    return list(items.keys())
 
 # ✅ Nieuw item toevoegen (alleen tekst → "payload")
 @app.post("/items")
 async def create_item(payload: str = Form(...)):
     item_id = str(uuid.uuid4())
-    items[item_id] = {
-        "id": item_id,
-        "payload": payload
-    }
-    return items[item_id]
+    items[item_id] = payload
+    return {"id": item_id, "payload": payload}
+
+# ✅ Enkel de payload ophalen voor 1 item
+@app.get("/items/{item_id}")
+def get_item(item_id: str):
+    if item_id in items:
+        return items[item_id]  # geeft alleen de payload-string terug
+    return {"error": "Item not found"}
 
 # ✅ Item verwijderen
 @app.delete("/items/{item_id}")
