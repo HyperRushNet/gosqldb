@@ -1,11 +1,14 @@
-from fastapi import FastAPI, Form
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+import asyncio
 import uuid
+from typing import Dict
+
+from fastapi import FastAPI, Request, Response, HTTPException
+from fastapi.responses import ORJSONResponse, PlainTextResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
-# ✅ CORS op alles toestaan
+# CORS open
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -14,41 +17,58 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Simpele in-memory opslag (reset bij server restart)
-items = {}  # { id: payload }
+# In-memory store
+_items: Dict[str, str] = {}
+_lock = asyncio.Lock()  # protect writes
+
+MAX_PAYLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
 
 @app.get("/")
-def read_root():
-    return {"message": "Backend is running"}
+async def root():
+    return ORJSONResponse({"message": "Backend is running"})
 
-# ✅ Healthcheck: 204 No Content
 @app.get("/ping", status_code=204)
-def ping():
+async def ping():
     return Response(status_code=204)
 
-# ✅ Alle items ophalen → alleen IDs
 @app.get("/items")
-def get_items():
-    return list(items.keys())
+async def get_items():
+    return ORJSONResponse(list(_items.keys()))
 
-# ✅ Nieuw item toevoegen (alleen tekst → "payload")
 @app.post("/items")
-async def create_item(payload: str = Form(...)):
+async def create_item(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    payload = body.get("payload")
+    if not isinstance(payload, str) or payload == "":
+        raise HTTPException(status_code=400, detail="payload must be a non-empty string")
+
+    # Check payload size (in bytes)
+    size_bytes = len(payload.encode("utf-8"))
+    if size_bytes > MAX_PAYLOAD_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Payload too large: {size_bytes} bytes (max {MAX_PAYLOAD_SIZE} bytes)"
+        )
+
     item_id = str(uuid.uuid4())
-    items[item_id] = payload
-    return {"id": item_id, "payload": payload}
+    async with _lock:
+        _items[item_id] = payload
+    return ORJSONResponse({"id": item_id, "payload": payload})
 
-# ✅ Enkel de payload ophalen voor 1 item
 @app.get("/items/{item_id}")
-def get_item(item_id: str):
-    if item_id in items:
-        return items[item_id]  # geeft alleen de payload-string terug
-    return {"error": "Item not found"}
+async def get_item(item_id: str):
+    payload = _items.get(item_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return PlainTextResponse(payload)
 
-# ✅ Item verwijderen
 @app.delete("/items/{item_id}")
-def delete_item(item_id: str):
-    if item_id in items:
-        del items[item_id]
-        return {"status": "deleted"}
-    return {"error": "Item not found"}
+async def delete_item(item_id: str):
+    async with _lock:
+        if item_id in _items:
+            del _items[item_id]
+            return ORJSONResponse({"status": "deleted"})
+    raise HTTPException(status_code=404, detail="Item not found")
