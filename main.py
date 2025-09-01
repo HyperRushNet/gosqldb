@@ -4,6 +4,9 @@ from typing import Dict
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse, StreamingResponse
+import aiofiles
+import os
+import tempfile
 
 app = FastAPI()
 
@@ -16,15 +19,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Ultra-light in-memory store
-_items: Dict[str, memoryview] = {}
-_lock = asyncio.Lock()
-MAX_PAYLOAD_SIZE = 100 * 1024 * 1024  # 100 MB, kan nog groter
-CHUNK_SIZE = 4 * 1024 * 1024  # 4 MB chunks → minder async overhead
+# item_id -> file path
+_items: Dict[str, str] = {}
+_lock = asyncio.Lock()  # protect writes only
+MAX_PAYLOAD_SIZE = 50 * 1024 * 1024  # 50MB, kan groter
 
 @app.get("/")
 async def root():
     return ORJSONResponse({"message": "Backend is running"})
+
+@app.get("/ping", status_code=204)
+async def ping():
+    return ORJSONResponse(status_code=204)
 
 @app.get("/items")
 async def get_items():
@@ -33,42 +39,52 @@ async def get_items():
 @app.post("/items")
 async def create_item(request: Request):
     size = 0
-    chunks = []
+    # Maak een tijdelijk bestand aan voor deze upload
+    tmp_file = tempfile.NamedTemporaryFile(delete=False)
+    tmp_path = tmp_file.name
+    tmp_file.close()  # aiofiles opent zelf
 
-    # stream upload
-    async for chunk in request.stream():
-        size += len(chunk)
-        if size > MAX_PAYLOAD_SIZE:
-            raise HTTPException(status_code=413, detail="Payload too large")
-        # direct memoryview → geen kopieën
-        chunks.append(memoryview(chunk))
+    # Async schrijf in chunks
+    async with aiofiles.open(tmp_path, 'wb') as f:
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > MAX_PAYLOAD_SIZE:
+                raise HTTPException(status_code=413, detail="Payload too large")
+            await f.write(chunk)
 
     item_id = str(uuid.uuid4())
     async with _lock:
-        # combineer chunks via memoryview → geen extra bytes copy
-        total = b"".join(chunks)
-        _items[item_id] = memoryview(total)
+        _items[item_id] = tmp_path
 
     return ORJSONResponse({"id": item_id})
 
 @app.get("/items/{item_id}")
 async def get_item(item_id: str):
-    payload = _items.get(item_id)
-    if not payload:
+    path = _items.get(item_id)
+    if not path or not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Item not found")
 
-    # StreamingResponse uit memoryview
-    def iterator(chunk_size=CHUNK_SIZE):
-        mv = payload
-        for i in range(0, len(mv), chunk_size):
-            yield mv[i:i+chunk_size]
+    # Async file streaming
+    async def file_iterator(file_path, chunk_size=64*1024):
+        async with aiofiles.open(file_path, 'rb') as f:
+            while True:
+                chunk = await f.read(chunk_size)
+                if not chunk:
+                    break
+                yield chunk
 
-    return StreamingResponse(iterator(), media_type="application/octet-stream")
+    return StreamingResponse(file_iterator(path), media_type="application/octet-stream")
 
 @app.delete("/items/{item_id}")
 async def delete_item(item_id: str):
     async with _lock:
-        if item_id in _items:
-            del _items[item_id]
-            return ORJSONResponse({"status": "deleted"})
+        path = _items.pop(item_id, None)
+
+    if path and os.path.exists(path):
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+        return ORJSONResponse({"status": "deleted"})
+
     raise HTTPException(status_code=404, detail="Item not found")
