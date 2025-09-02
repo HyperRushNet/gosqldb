@@ -1,13 +1,9 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.staticfiles import StaticFiles
 import json
 
 app = FastAPI()
 
-# Static files (zodat index.html direct werkt op Render)
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
-
-# In-memory database
+# In-memory opslag (alleen gecomprimeerde Base64 strings)
 db = {}
 
 
@@ -20,7 +16,10 @@ async def websocket_endpoint(ws: WebSocket):
             msg = json.loads(raw)
 
             if msg["action"] == "list":
-                await ws.send_text(json.dumps({"action": "list", "ids": list(db.keys())}))
+                await ws.send_text(json.dumps({
+                    "action": "list",
+                    "ids": list(db.keys())
+                }))
 
             elif msg["action"] == "get":
                 item_id = msg["id"]
@@ -28,14 +27,14 @@ async def websocket_endpoint(ws: WebSocket):
                     await ws.send_text(json.dumps({
                         "action": "get",
                         "id": item_id,
-                        "data": db[item_id]
+                        "data": db[item_id]  # stuur gecomprimeerde string terug
                     }))
                 else:
                     await ws.send_text(json.dumps({"error": f"Item {item_id} not found"}))
 
             elif msg["action"] == "add":
                 new_id = str(len(db) + 1)
-                db[new_id] = msg["data"]
+                db[new_id] = msg["data"]  # opslaan zoals ontvangen
                 await ws.send_text(json.dumps({"action": "add", "id": new_id}))
 
             elif msg["action"] == "delete":
