@@ -1,90 +1,50 @@
-import uuid
-import asyncio
-from typing import Dict
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import ORJSONResponse, StreamingResponse
-import aiofiles
-import os
-import tempfile
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
+import json
 
 app = FastAPI()
 
-# CORS open
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Static files (zodat index.html direct werkt op Render)
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
 
-# item_id -> file path
-_items: Dict[str, str] = {}
-_lock = asyncio.Lock()  # protect writes only
-MAX_PAYLOAD_SIZE = 50 * 1024 * 1024  # 50MB, kan groter
+# In-memory database
+db = {}
 
-@app.get("/")
-async def root():
-    return ORJSONResponse({"message": "Backend is running"})
 
-@app.get("/ping", status_code=204)
-async def ping():
-    return ORJSONResponse(status_code=204)
+@app.websocket("/ws")
+async def websocket_endpoint(ws: WebSocket):
+    await ws.accept()
+    try:
+        while True:
+            raw = await ws.receive_text()
+            msg = json.loads(raw)
 
-@app.get("/items")
-async def get_items():
-    return ORJSONResponse(list(_items.keys()))
+            if msg["action"] == "list":
+                await ws.send_text(json.dumps({"action": "list", "ids": list(db.keys())}))
 
-@app.post("/items")
-async def create_item(request: Request):
-    size = 0
-    # Maak een tijdelijk bestand aan voor deze upload
-    tmp_file = tempfile.NamedTemporaryFile(delete=False)
-    tmp_path = tmp_file.name
-    tmp_file.close()  # aiofiles opent zelf
+            elif msg["action"] == "get":
+                item_id = msg["id"]
+                if item_id in db:
+                    await ws.send_text(json.dumps({
+                        "action": "get",
+                        "id": item_id,
+                        "data": db[item_id]
+                    }))
+                else:
+                    await ws.send_text(json.dumps({"error": f"Item {item_id} not found"}))
 
-    # Async schrijf in chunks
-    async with aiofiles.open(tmp_path, 'wb') as f:
-        async for chunk in request.stream():
-            size += len(chunk)
-            if size > MAX_PAYLOAD_SIZE:
-                raise HTTPException(status_code=413, detail="Payload too large")
-            await f.write(chunk)
+            elif msg["action"] == "add":
+                new_id = str(len(db) + 1)
+                db[new_id] = msg["data"]
+                await ws.send_text(json.dumps({"action": "add", "id": new_id}))
 
-    item_id = str(uuid.uuid4())
-    async with _lock:
-        _items[item_id] = tmp_path
+            elif msg["action"] == "delete":
+                item_id = msg["id"]
+                if item_id in db:
+                    del db[item_id]
+                    await ws.send_text(json.dumps({"action": "delete", "id": item_id}))
+                else:
+                    await ws.send_text(json.dumps({"error": f"Item {item_id} not found"}))
 
-    return ORJSONResponse({"id": item_id})
-
-@app.get("/items/{item_id}")
-async def get_item(item_id: str):
-    path = _items.get(item_id)
-    if not path or not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="Item not found")
-
-    # Async file streaming
-    async def file_iterator(file_path, chunk_size=64*1024):
-        async with aiofiles.open(file_path, 'rb') as f:
-            while True:
-                chunk = await f.read(chunk_size)
-                if not chunk:
-                    break
-                yield chunk
-
-    return StreamingResponse(file_iterator(path), media_type="application/octet-stream")
-
-@app.delete("/items/{item_id}")
-async def delete_item(item_id: str):
-    async with _lock:
-        path = _items.pop(item_id, None)
-
-    if path and os.path.exists(path):
-        try:
-            os.remove(path)
-        except Exception:
-            pass
-        return ORJSONResponse({"status": "deleted"})
-
-    raise HTTPException(status_code=404, detail="Item not found")
+    except WebSocketDisconnect:
+        print("Client disconnected")
