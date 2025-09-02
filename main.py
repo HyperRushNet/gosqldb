@@ -1,49 +1,33 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-import json
+import zlib
+import uuid
+from fastapi import FastAPI, WebSocket
+from fastapi.responses import HTMLResponse
 
 app = FastAPI()
 
-# In-memory opslag (alleen gecomprimeerde Base64 strings)
-db = {}
-
+db = {}  # ID -> compressed bytes
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
-    try:
-        while True:
-            raw = await ws.receive_text()
-            msg = json.loads(raw)
-
-            if msg["action"] == "list":
-                await ws.send_text(json.dumps({
-                    "action": "list",
-                    "ids": list(db.keys())
-                }))
-
-            elif msg["action"] == "get":
-                item_id = msg["id"]
-                if item_id in db:
-                    await ws.send_text(json.dumps({
-                        "action": "get",
-                        "id": item_id,
-                        "data": db[item_id]  # stuur gecomprimeerde string terug
-                    }))
-                else:
-                    await ws.send_text(json.dumps({"error": f"Item {item_id} not found"}))
-
-            elif msg["action"] == "add":
-                new_id = str(len(db) + 1)
-                db[new_id] = msg["data"]  # opslaan zoals ontvangen
-                await ws.send_text(json.dumps({"action": "add", "id": new_id}))
-
-            elif msg["action"] == "delete":
-                item_id = msg["id"]
-                if item_id in db:
-                    del db[item_id]
-                    await ws.send_text(json.dumps({"action": "delete", "id": item_id}))
-                else:
-                    await ws.send_text(json.dumps({"error": f"Item {item_id} not found"}))
-
-    except WebSocketDisconnect:
-        print("Client disconnected")
+    while True:
+        data = await ws.receive_bytes()  # krijg binaire data
+        if data.startswith(b"ADD:"):
+            payload = data[4:]
+            item_id = str(uuid.uuid4())
+            compressed = zlib.compress(payload)
+            db[item_id] = compressed
+            await ws.send_text(f"ADDED:{item_id}")
+        elif data.startswith(b"GET:"):
+            item_id = data[4:].decode()
+            if item_id in db:
+                await ws.send_bytes(db[item_id])  # stuur binaire data terug
+            else:
+                await ws.send_text("ERROR:NOT_FOUND")
+        elif data.startswith(b"LIST"):
+            ids = ",".join(db.keys())
+            await ws.send_text(f"LIST:{ids}")
+        elif data.startswith(b"DEL:"):
+            item_id = data[4:].decode()
+            db.pop(item_id, None)
+            await ws.send_text(f"DELETED:{item_id}")
