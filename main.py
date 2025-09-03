@@ -1,14 +1,9 @@
 # main.py
 import uuid
 from fastapi import FastAPI, WebSocket
-from fastapi.responses import PlainTextResponse
 
 app = FastAPI()
 db = {}  # id -> raw bytes
-
-@app.get("/", response_class=PlainTextResponse)
-async def root():
-    return "WS server: use /ws for WebSocket"
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
@@ -18,7 +13,7 @@ async def websocket_endpoint(ws: WebSocket):
         if data.startswith(b"ADD:"):
             payload = data[4:]
             item_id = str(uuid.uuid4())
-            db[item_id] = payload  # raw store, no compression
+            db[item_id] = payload  # raw storage, no compression
             await ws.send_text(f"ADDED:{item_id}")
         elif data.startswith(b"GET:"):
             item_id = data[4:].decode()
