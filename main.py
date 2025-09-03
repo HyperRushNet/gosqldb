@@ -1,8 +1,8 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import sqlalchemy
 import databases
+import sqlalchemy
 import datetime
 
 DATABASE_URL = "sqlite:///./test.db"
@@ -10,7 +10,6 @@ DATABASE_URL = "sqlite:///./test.db"
 database = databases.Database(DATABASE_URL)
 metadata = sqlalchemy.MetaData()
 
-# Table definition
 items = sqlalchemy.Table(
     "items",
     metadata,
@@ -34,7 +33,6 @@ class Item(BaseModel):
     id: str
     content: str
 
-# Startup/shutdown
 @app.on_event("startup")
 async def startup():
     await database.connect()
@@ -43,41 +41,36 @@ async def startup():
 async def shutdown():
     await database.disconnect()
 
-# CRUD routes
-
-# Add item
+# Voeg item toe
 @app.post("/add")
 async def add_item(item: Item):
     query = items.insert().values(id=item.id, content=item.content, created_at=datetime.datetime.utcnow())
     await database.execute(query)
     return {"status": "ok", "id": item.id}
 
-# Get all IDs
+# Lijst van IDs
 @app.get("/items")
 async def get_ids():
-    query = items.select().with_only_columns([items.c.id])
+    query = items.select().with_only_columns(items.c.id)
     rows = await database.fetch_all(query)
     return [row["id"] for row in rows]
 
-# Get content (plain text)
+# Content van item als pure text
 @app.get("/items/{item_id}")
-async def get_content(item_id: str):
+async def get_item_content(item_id: str):
     query = items.select().where(items.c.id == item_id)
     row = await database.fetch_one(query)
     if row:
         return row["content"]
     raise HTTPException(status_code=404, detail="Item not found")
 
-# Get info (JSON, excluding content)
+# Metadata van item
 @app.get("/items/{item_id}/info")
-async def get_info(item_id: str):
+async def get_item_info(item_id: str):
     query = items.select().where(items.c.id == item_id)
     row = await database.fetch_one(query)
     if row:
-        return {
-            "id": row["id"],
-            "created_at": row["created_at"]
-        }
+        return {"id": row["id"], "created_at": row["created_at"]}
     raise HTTPException(status_code=404, detail="Item not found")
 
 # Delete item
@@ -85,4 +78,6 @@ async def get_info(item_id: str):
 async def delete_item(item_id: str):
     query = items.delete().where(items.c.id == item_id)
     result = await database.execute(query)
-    return {"status": "deleted", "id": item_id}
+    if result:
+        return {"status": "deleted", "id": item_id}
+    raise HTTPException(status_code=404, detail="Item not found")
