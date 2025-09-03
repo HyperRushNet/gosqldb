@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
 
@@ -44,7 +45,7 @@ async def ws_endpoint(ws: WebSocket):
         elif text and text.startswith("ENDUPLOAD:"):
             end_id = text[10:]
             if end_id == current_id:
-                db[current_id] = buffer  # save accumulated chunks
+                db[current_id] = buffer
                 await ws.send_text(f"ADDED:{current_id}")
                 buffer = b""
             else:
@@ -54,3 +55,8 @@ async def ws_endpoint(ws: WebSocket):
         else:
             if current_id:
                 buffer += msg
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
