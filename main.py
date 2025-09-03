@@ -1,13 +1,31 @@
 from fastapi import FastAPI, WebSocket
+from fastapi.responses import JSONResponse
 
 app = FastAPI()
 db = {}  # id -> compressed bytes
 
+# ----------------------
+# Ping endpoint
+# ----------------------
+@app.get("/ping")
+async def ping():
+    return JSONResponse({"status": "ok"})
+
+# ----------------------
+# CreateWS endpoint
+# ----------------------
+@app.get("/createws")
+async def create_ws():
+    return JSONResponse({"message": "WS ready"})
+
+# ----------------------
+# WebSocket endpoint
+# ----------------------
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
     current_id = None
-    buffer = b""  # temporary buffer for chunks
+    buffer = b""  # accumulate all chunks
 
     while True:
         try:
@@ -40,7 +58,7 @@ async def ws_endpoint(ws: WebSocket):
         elif text and text.startswith("ENDUPLOAD:"):
             end_id = text[10:]
             if end_id == current_id:
-                db[current_id] = buffer  # commit accumulated data
+                db[current_id] = buffer
                 await ws.send_text(f"ADDED:{current_id}")
                 buffer = b""
             else:
@@ -49,4 +67,4 @@ async def ws_endpoint(ws: WebSocket):
         # Payload chunk
         else:
             if current_id:
-                buffer += msg  # accumulate all chunks
+                buffer += msg
