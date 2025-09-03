@@ -8,7 +8,6 @@ COPY frontend ./frontend
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Use Render-provided port
 ENV PORT 8000
 EXPOSE 8000
 
