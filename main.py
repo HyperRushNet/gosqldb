@@ -3,46 +3,41 @@ from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# CORS zodat frontend overal kan verbinden
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-db = {}  # id -> compressed bytes
+db={}           # id -> bytes
+chunk_db={}     # id -> list of bytes
 
 @app.websocket("/ws")
-async def websocket_endpoint(ws: WebSocket):
+async def ws_endpoint(ws: WebSocket):
     await ws.accept()
-    current_id = None
     while True:
-        try:
-            msg = await ws.receive()
-            if "text" in msg:
-                import json
-                data = json.loads(msg["text"])
-                cmd = data.get("cmd")
-                if cmd == "ADD":
-                    current_id = data.get("id")
-                    db[current_id] = b''  # placeholder for bytes
-                    await ws.send_text(f"READY:{current_id}")
-                elif cmd == "GET":
-                    item_id = data.get("id")
-                    if item_id in db:
-                        await ws.send_bytes(db[item_id])
-                    else:
-                        await ws.send_text("ERROR:NOT_FOUND")
-                elif cmd == "DEL":
-                    item_id = data.get("id")
-                    db.pop(item_id, None)
-                    await ws.send_text(f"DELETED:{item_id}")
-            elif "bytes" in msg:
-                if current_id:
-                    db[current_id] = msg["bytes"]  # sla compressed bytes op
-                    await ws.send_text(f"ADDED:{current_id}")
-                    current_id = None
-        except Exception as e:
-            await ws.send_text(f"ERROR:{e}")
+        msg=await ws.receive()
+        if "text" in msg:
+            data=msg["text"]
+            import json
+            obj=json.loads(data)
+            cmd=obj.get("cmd")
+            if cmd=="ADD_CHUNK":
+                cid=obj["id"]
+                index=obj["index"]
+                total=obj["total"]
+                if cid not in chunk_db:
+                    chunk_db[cid]=[None]*total
+                # next message should be bytes
+                msg2=await ws.receive_bytes()
+                chunk_db[cid][index]=msg2
+                # if last chunk received, merge and store
+                if all(chunk_db[cid]):
+                    db[cid]=b"".join(chunk_db[cid])
+                    chunk_db.pop(cid)
+                    await ws.send_text(f"ADDED:{cid}")
+            elif cmd=="GET":
+                item_id=obj["id"]
+                if item_id in db:
+                    await ws.send_bytes(db[item_id])
+                else:
+                    await ws.send_text("ERROR:NOT_FOUND")
+            elif cmd=="DEL":
+                db.pop(obj["id"],None)
+                await ws.send_text(f"DELETED:{obj['id']}")
