@@ -1,37 +1,45 @@
-import zlib, asyncio
+import zlib
+import uuid
 from fastapi import FastAPI, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
-db = {}  # id -> compressed bytes
+
+# CORS zodat frontend van andere site kan verbinden
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+db = {}  # ID -> compressed bytes
 
 @app.websocket("/ws")
-async def ws_endpoint(ws: WebSocket):
+async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
-    current_id = None
-    buffer = bytearray()
     while True:
-        data = await ws.receive()
-        if "text" in data:
-            text = data["text"]
-            if text.startswith("ADD:"):
-                current_id = text.split(":",2)[1]
-                buffer = bytearray()
-            elif text.startswith("GET:"):
-                item_id = text[4:]
+        data = await ws.receive_bytes()
+        try:
+            # Text commands
+            if data.startswith(b"ADD:"):
+                payload = data[4:]  # rest is payload
+                item_id = str(uuid.uuid4())
+                compressed = zlib.compress(payload)  # normal zlib
+                db[item_id] = compressed
+                await ws.send_text(f"ADDED:{item_id}")
+
+            elif data.startswith(b"GET:"):
+                item_id = data[4:].decode()
                 if item_id in db:
-                    chunk_size = 256*1024
-                    for i in range(0,len(db[item_id]),chunk_size):
-                        await ws.send_bytes(db[item_id][i:i+chunk_size])
-                        await asyncio.sleep(0)  # yield
+                    await ws.send_bytes(db[item_id])
                 else:
                     await ws.send_text("ERROR:NOT_FOUND")
-            elif text.startswith("DEL:"):
-                db.pop(text[4:],None)
-                await ws.send_text(f"DELETED:{text[4:]}")
-        elif "bytes" in data:
-            if current_id:
-                buffer.extend(data["bytes"])
-                db[current_id]=bytes(buffer)
-                await ws.send_text(f"ADDED:{current_id}")
-                current_id=None
-                buffer=bytearray()
+
+            elif data.startswith(b"DEL:"):
+                item_id = data[4:].decode()
+                db.pop(item_id, None)
+                await ws.send_text(f"DELETED:{item_id}")
+
+        except Exception as e:
+            await ws.send_text(f"ERROR:{e}")
