@@ -1,48 +1,21 @@
-from fastapi import FastAPI, WebSocket, HTTPException
+from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-import sqlalchemy
-import databases
-
-# ----------------------
-# Config
-# ----------------------
-DATABASE_URL = "sqlite:///./data.db"
-database = databases.Database(DATABASE_URL)
-metadata = sqlalchemy.MetaData()
-
-# SQLite table
-items = sqlalchemy.Table(
-    "items",
-    metadata,
-    sqlalchemy.Column("id", sqlalchemy.String, primary_key=True),
-    sqlalchemy.Column("data", sqlalchemy.LargeBinary),
-)
-
-engine = sqlalchemy.create_engine(DATABASE_URL)
-metadata.create_all(engine)
 
 app = FastAPI()
 
-# CORS
+# ----------------------
+# CORS: allow all domains
+# ----------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],       # alles toegestaan
+    allow_origins=["*"],       # alle domeinen toegestaan
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ----------------------
-# Startup / Shutdown
-# ----------------------
-@app.on_event("startup")
-async def startup():
-    await database.connect()
-
-@app.on_event("shutdown")
-async def shutdown():
-    await database.disconnect()
+db = {}  # id -> compressed bytes
 
 # ----------------------
 # Ping endpoint
@@ -57,6 +30,13 @@ async def ping():
 @app.get("/createws")
 async def create_ws():
     return JSONResponse({"message": "WS ready"})
+
+# ----------------------
+# List all IDs
+# ----------------------
+@app.get("/list_ids")
+async def list_ids():
+    return JSONResponse({"ids": list(db.keys())})
 
 # ----------------------
 # WebSocket endpoint
@@ -82,15 +62,14 @@ async def ws_endpoint(ws: WebSocket):
         if text and text.startswith("NEWID:"):
             current_id = text[6:]
             buffer = b""
+            db[current_id] = b""  # reserve slot
             await ws.send_text(f"READY:{current_id}")
 
         # GET
         elif text and text.startswith("GET:"):
             item_id = text[4:]
-            query = items.select().where(items.c.id == item_id)
-            item = await database.fetch_one(query)
-            if item:
-                await ws.send_bytes(item["data"])
+            if item_id in db and db[item_id]:
+                await ws.send_bytes(db[item_id])
                 await ws.send_text(f"END:{item_id}")
             else:
                 await ws.send_text("ERROR:NOT_FOUND")
@@ -99,8 +78,7 @@ async def ws_endpoint(ws: WebSocket):
         elif text and text.startswith("ENDUPLOAD:"):
             end_id = text[10:]
             if end_id == current_id:
-                query = items.insert().values(id=current_id, data=buffer)
-                await database.execute(query)
+                db[current_id] = buffer
                 await ws.send_text(f"ADDED:{current_id}")
                 buffer = b""
             else:
