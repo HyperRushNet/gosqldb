@@ -1,7 +1,20 @@
 from fastapi import FastAPI, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 app = FastAPI()
+
+# ----------------------
+# CORS: allow all domains
+# ----------------------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],       # <- alle domeinen toegestaan
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 db = {}  # id -> compressed bytes
 
 # ----------------------
@@ -68,3 +81,9 @@ async def ws_endpoint(ws: WebSocket):
         else:
             if current_id:
                 buffer += msg
+
+# ----------------------
+# Example request testing
+# ----------------------
+# Run: curl https://<your-app>.onrender.com/ping
+# Returns: {"status": "ok"}
