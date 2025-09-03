@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
-# CORS
+# CORS voor frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -13,35 +13,37 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-db = {}  # id -> compressed bytes
+db = {}  # id -> bytes
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
+    current_id = None
     while True:
         try:
-            msg = await ws.receive_text()
-            import json
-            data = json.loads(msg)
-
-            cmd = data.get("cmd")
-            if cmd == "ADD":
-                item_id = data.get("id") or str(uuid.uuid4())
-                payload = bytes(data.get("payload"), 'latin1')  # receive raw binary as latin1 string
-                db[item_id] = payload
-                await ws.send_text(f"ADDED:{item_id}")
-
-            elif cmd == "GET":
-                item_id = data.get("id")
-                if item_id in db:
-                    await ws.send_bytes(db[item_id])
-                else:
-                    await ws.send_text("ERROR:NOT_FOUND")
-
-            elif cmd == "DEL":
-                item_id = data.get("id")
-                db.pop(item_id, None)
-                await ws.send_text(f"DELETED:{item_id}")
-
+            msg = await ws.receive()
+            if "text" in msg:
+                import json
+                data = json.loads(msg["text"])
+                cmd = data.get("cmd")
+                if cmd == "ADD":
+                    current_id = data.get("id") or str(uuid.uuid4())
+                    db[current_id] = b''  # placeholder
+                    await ws.send_text(f"READY:{current_id}")
+                elif cmd == "GET":
+                    item_id = data.get("id")
+                    if item_id in db:
+                        await ws.send_bytes(db[item_id])
+                    else:
+                        await ws.send_text("ERROR:NOT_FOUND")
+                elif cmd == "DEL":
+                    item_id = data.get("id")
+                    db.pop(item_id, None)
+                    await ws.send_text(f"DELETED:{item_id}")
+            elif "bytes" in msg:
+                if current_id:
+                    db[current_id] = msg["bytes"]
+                    await ws.send_text(f"ADDED:{current_id}")
+                    current_id = None
         except Exception as e:
             await ws.send_text(f"ERROR:{e}")
