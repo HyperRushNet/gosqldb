@@ -1,40 +1,44 @@
+import zlib
 import uuid
 from fastapi import FastAPI, WebSocket
-import asyncio
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-db = {}  # ID -> bytearray
+db = {}  # id -> compressed bytes
 
 @app.websocket("/ws")
-async def websocket_endpoint(ws: WebSocket):
+async def ws_endpoint(ws: WebSocket):
     await ws.accept()
-    current_id = None
-    db[current_id] = bytearray()
-    try:
-        while True:
-            msg = await ws.receive_bytes()
-            # Detect begin of new item
-            if msg.startswith(b"NEWID:"):
-                current_id = msg[6:].decode()
-                db[current_id] = bytearray()
-                await ws.send_text(f"READY:{current_id}")
-                continue
-            # Detect GET request
-            if msg.startswith(b"GET:"):
-                item_id = msg[4:].decode()
-                if item_id not in db:
-                    await ws.send_text("ERROR:NOT_FOUND")
-                    continue
-                full = db[item_id]
-                chunk_size = 256*1024
-                for i in range(0,len(full),chunk_size):
-                    await ws.send_bytes(full[i:i+chunk_size])
+    while True:
+        data = await ws.receive_bytes()
+        # NEW ID
+        if data.startswith(b"NEWID:"):
+            item_id = data[6:].decode()
+            db[item_id] = b""  # init empty
+            await ws.send_text(f"READY:{item_id}")
+        # ADD chunk
+        elif data.startswith(b"CHUNK:"):
+            # not needed in this backend, frontend sends raw bytes
+            pass
+        # GET
+        elif data.startswith(b"GET:"):
+            item_id = data[4:].decode()
+            if item_id in db:
+                payload = db[item_id]
+                await ws.send_bytes(payload)
                 await ws.send_text(f"END:{item_id}")
-                continue
-            # Otherwise treat as chunk of bytes
-            if current_id:
-                db[current_id] += msg
-                await ws.send_text(f"CHUNK:{len(msg)}")
-    except Exception as e:
-        await ws.close()
+            else:
+                await ws.send_text("ERROR:NOT_FOUND")
+        # ADD final payload
+        else:
+            # treat all other bytes as full payload
+            if hasattr(ws, "current_id"):
+                db[ws.current_id] = data
+            else:
+                # fallback id
+                new_id = str(uuid.uuid4())
+                db[new_id] = data
+                ws.current_id = new_id
+                await ws.send_text(f"ADDED:{new_id}")
