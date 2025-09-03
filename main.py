@@ -22,27 +22,26 @@ async def websocket_endpoint(ws: WebSocket):
                 logging.error(f"Error receiving message: {e}")
                 continue
 
-            if msg["type"] == "websocket.disconnect":
-                logging.info(f"Client disconnected: {current_id}")
-                break
-
             # Binary chunk
             if msg["type"] == "websocket.bytes":
                 if current_id is not None:
                     buffer += msg["bytes"]
-                    logging.debug(f"Received binary chunk ({len(msg['bytes'])} bytes) for ID {current_id}")
+                    logging.debug(f"Received chunk ({len(msg['bytes'])} bytes) for ID {current_id}")
                 continue
 
             # Text message
             if msg["type"] == "websocket.text":
-                text = msg.get("text", "")
-                
+                text = msg.get("text","")
+
+                # NEWID
                 if text.startswith("NEWID:"):
                     current_id = text[6:]
                     buffer = b""
-                    logging.info(f"NEWID: {current_id}")
+                    db[current_id] = b""
+                    logging.info(f"NEWID received: {current_id}")
                     await ws.send_text(f"READY:{current_id}")
 
+                # GET
                 elif text.startswith("GET:"):
                     item_id = text[4:]
                     if item_id in db and db[item_id]:
@@ -53,6 +52,7 @@ async def websocket_endpoint(ws: WebSocket):
                         await ws.send_text("ERROR:NOT_FOUND")
                         logging.warning(f"GET error: ID {item_id} not found")
 
+                # ENDUPLOAD
                 elif text.startswith("ENDUPLOAD:"):
                     end_id = text[10:]
                     if end_id == current_id:
@@ -64,8 +64,8 @@ async def websocket_endpoint(ws: WebSocket):
                         await ws.send_text("ERROR:UPLOAD_MISMATCH")
                         logging.warning(f"ENDUPLOAD mismatch: {end_id} vs {current_id}")
 
+                # Echo any other text
                 else:
-                    # Optional: echo text
                     logging.info(f"Received text: {text}")
                     await ws.send_text(f"ECHO:{text}")
 
