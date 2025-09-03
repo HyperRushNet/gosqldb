@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>WebSocket 3M Payload Test</title>
+<script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+<style>
+body { font-family: sans-serif; margin: 20px; }
+button { margin: 5px; padding: 10px; }
+#log { white-space: pre-wrap; background: #f0f0f0; padding: 10px; height: 400px; overflow-y: scroll; }
+</style>
+</head>
+<body>
+
+<h1>WebSocket 3M Payload Test (Single ID)</h1>
+<button id="connectBtn">Connect</button>
+<button id="sendBtn">Send 3M Random Payload</button>
+<button id="getBtn">Get Payload</button>
+
+<div id="log"></div>
+
+<script>
+const logDiv = document.getElementById("log");
+const log = msg => { 
+    console.log(msg); 
+    logDiv.textContent += msg + "\n"; 
+    logDiv.scrollTop = logDiv.scrollHeight; 
+};
+
+let ws, currentID;
+
+function genRandomPayload(size){
+    const buf = new Uint8Array(size);
+    const chunk = 65536;
+    let offset = 0;
+    while(offset < size){
+        const thisChunk = Math.min(chunk, size - offset);
+        crypto.getRandomValues(buf.subarray(offset, offset+thisChunk));
+        offset += thisChunk;
+    }
+    return buf;
+}
+
+document.getElementById("connectBtn").onclick = async () => {
+    ws = new WebSocket(`ws://${location.host}/ws`);
+    ws.binaryType = "arraybuffer";
+    ws.onmessage = ev => log("TEXT recv: "+ (ev.data instanceof ArrayBuffer ? ev.data.byteLength+" bytes" : ev.data));
+    ws.onopen = () => log("CONNECTED");
+    ws.onerror = ev => log("ERROR connecting to WebSocket");
+};
+
+document.getElementById("sendBtn").onclick = async () => {
+    if(!ws || ws.readyState !== 1) return;
+    currentID = "item-" + Date.now();
+
+    ws.send(new TextEncoder().encode("NEWID:"+currentID));
+    await new Promise(r => {
+        const handler = ev => {
+            if(typeof ev.data==="string" && ev.data.startsWith("READY:")){
+                ws.removeEventListener("message", handler);
+                r();
+            }
+        };
+        ws.addEventListener("message", handler);
+    });
+    log("Starting upload for ID: "+currentID);
+
+    const payload = genRandomPayload(3_000_000);
+    const t1 = performance.now();
+    const compressed = pako.deflate(payload, {level:9, raw:true});
+    const t2 = performance.now();
+    log(`Compressed ${payload.byteLength} -> ${compressed.byteLength} bytes | compress time ${(t2-t1).toFixed(3)} ms`);
+
+    const chunkSize = 256_000;
+    for(let offset=0; offset<compressed.length; offset+=chunkSize){
+        const chunk = compressed.subarray(offset, offset+chunkSize);
+        ws.send(chunk);
+        log(`Sent chunk ${offset}-${offset+chunk.length}`);
+        await new Promise(r => setTimeout(r, 5));
+    }
+
+    ws.send(new TextEncoder().encode("ENDUPLOAD:"+currentID));
+
+    await new Promise(r => {
+        const handler = ev => {
+            if(typeof ev.data === "string" && ev.data.startsWith("ADDED:")){
+                ws.removeEventListener("message", handler);
+                r();
+            }
+        };
+        ws.addEventListener("message", handler);
+    });
+    log("Payload sent successfully (all chunks uploaded under single ID)");
+};
+
+document.getElementById("getBtn").onclick = async () => {
+    if(!currentID) return;
+    const chunks = [];
+    ws.send(new TextEncoder().encode("GET:"+currentID));
+
+    await new Promise(r => {
+        const handler = ev => {
+            if(ev.data instanceof ArrayBuffer){
+                chunks.push(new Uint8Array(ev.data));
+            } else if(typeof ev.data === "string"){
+                if(ev.data.startsWith("END:") || ev.data.startsWith("ERROR:")){
+                    ws.removeEventListener("message", handler);
+                    r();
+                }
+            }
+        };
+        ws.addEventListener("message", handler);
+    });
+
+    if(chunks.length === 0){
+        log("No data received for ID: " + currentID);
+        return;
+    }
+
+    const totalLen = chunks.reduce((a,c)=>a+c.length,0);
+    const compressed = new Uint8Array(totalLen);
+    let offset = 0;
+    for(const c of chunks){ compressed.set(c, offset); offset += c.length; }
+
+    const t1 = performance.now();
+    const decompressed = pako.inflate(compressed, {to:"uint8array", raw:true});
+    const t2 = performance.now();
+    log(`GET complete | decompressed ${decompressed.length} bytes | decompress time ${(t2-t1).toFixed(3)} ms`);
+};
+</script>
+
+</body>
+</html>
