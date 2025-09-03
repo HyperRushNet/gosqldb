@@ -41,11 +41,16 @@ function genRandomPayload(size){
     return buf;
 }
 
+function getWSUrl() {
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    return `${proto}://${location.host}/ws`;
+}
+
 document.getElementById("connectBtn").onclick = async () => {
-    ws = new WebSocket(`ws://${location.host}/ws`);
+    ws = new WebSocket(getWSUrl());
     ws.binaryType = "arraybuffer";
     ws.onmessage = ev => log("TEXT recv: "+ (ev.data instanceof ArrayBuffer ? ev.data.byteLength+" bytes" : ev.data));
-    ws.onopen = () => log("CONNECTED");
+    ws.onopen = () => log("CONNECTED (using " + ws.url + ")");
     ws.onerror = ev => log("ERROR connecting to WebSocket");
 };
 
