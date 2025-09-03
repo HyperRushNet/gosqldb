@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Form
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import databases
@@ -43,20 +43,35 @@ async def shutdown():
 
 @app.post("/add")
 async def add_item(item: Item):
-    query = items.insert().values(id=item.id, content=item.content, created_at=datetime.datetime.utcnow())
+    query = items.insert().values(
+        id=item.id,
+        content=item.content,
+        created_at=datetime.datetime.utcnow()
+    )
     await database.execute(query)
     return {"status": "ok", "id": item.id}
 
-@app.get("/get/{item_id}")
-async def get_item(item_id: str):
-    query = items.select().where(items.c.id == item_id)
+# Alleen de content, plain text
+@app.get("/items/{item_id}")
+async def get_item_content(item_id: str):
+    query = sqlalchemy.select(items.c.content).where(items.c.id == item_id)
     row = await database.fetch_one(query)
     if row:
-        return {"id": row["id"], "content": row["content"], "created_at": row["created_at"]}
+        return Response(content=row["content"], media_type="text/plain")
+    return Response(content="Item not found", media_type="text/plain", status_code=404)
+
+# Alleen metadata, geen content
+@app.get("/items/{item_id}/info")
+async def get_item_info(item_id: str):
+    query = sqlalchemy.select(items.c.id, items.c.created_at).where(items.c.id == item_id)
+    row = await database.fetch_one(query)
+    if row:
+        return dict(row)
     return {"error": "Item not found"}
 
-@app.get("/all")
-async def get_all_items():
-    query = items.select()
+# Alleen lijst van alle IDs
+@app.get("/items")
+async def get_all_ids():
+    query = sqlalchemy.select(items.c.id)
     rows = await database.fetch_all(query)
-    return [{"id": row["id"], "content": row["content"], "created_at": row["created_at"]} for row in rows]
+    return [row["id"] for row in rows]
