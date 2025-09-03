@@ -8,9 +8,8 @@ COPY frontend ./frontend
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Expose port provided by Render
+# Use Render-provided port
 ENV PORT 8000
 EXPOSE 8000
 
-# Use environment variable PORT
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
