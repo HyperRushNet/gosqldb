@@ -1,11 +1,10 @@
 import zlib
-import uuid
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
-# CORS voor frontend
+# CORS zodat frontend overal kan verbinden
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -13,7 +12,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-db = {}  # id -> bytes
+db = {}  # id -> compressed bytes
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
@@ -27,8 +26,8 @@ async def websocket_endpoint(ws: WebSocket):
                 data = json.loads(msg["text"])
                 cmd = data.get("cmd")
                 if cmd == "ADD":
-                    current_id = data.get("id") or str(uuid.uuid4())
-                    db[current_id] = b''  # placeholder
+                    current_id = data.get("id")
+                    db[current_id] = b''  # placeholder for bytes
                     await ws.send_text(f"READY:{current_id}")
                 elif cmd == "GET":
                     item_id = data.get("id")
@@ -42,7 +41,7 @@ async def websocket_endpoint(ws: WebSocket):
                     await ws.send_text(f"DELETED:{item_id}")
             elif "bytes" in msg:
                 if current_id:
-                    db[current_id] = msg["bytes"]
+                    db[current_id] = msg["bytes"]  # sla compressed bytes op
                     await ws.send_text(f"ADDED:{current_id}")
                     current_id = None
         except Exception as e:
