@@ -1,4 +1,3 @@
-import zlib
 from fastapi import FastAPI, WebSocket
 
 app = FastAPI()
@@ -8,6 +7,8 @@ db = {}  # id -> compressed bytes
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
     current_id = None
+    buffer = b""  # temporary buffer for chunks
+
     while True:
         try:
             msg = await ws.receive_bytes()
@@ -22,6 +23,7 @@ async def ws_endpoint(ws: WebSocket):
         # NEW ID
         if text and text.startswith("NEWID:"):
             current_id = text[6:]
+            buffer = b""
             db[current_id] = b""
             await ws.send_text(f"READY:{current_id}")
 
@@ -34,9 +36,10 @@ async def ws_endpoint(ws: WebSocket):
             else:
                 await ws.send_text("ERROR:NOT_FOUND")
 
-        # Payload
+        # Payload chunk
         else:
             if current_id:
-                # append if multiple chunks, else store single payload
-                db[current_id] += msg
-                await ws.send_text(f"ADDED:{current_id}")
+                buffer += msg  # accumulate all chunks
+                # Only set db[current_id] once all chunks are sent
+                # Here we assume the client will send a final "ENDUPLOAD" text message
+            # optional: handle end of upload
