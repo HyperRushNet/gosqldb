@@ -1,49 +1,52 @@
-import os
 from fastapi import FastAPI, WebSocket
-import uvicorn
 
 app = FastAPI()
 db = {}  # id -> compressed bytes
-buffers = {}  # id -> temporary buffer
 
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
     current_id = None
+    buffer = b""  # temporary buffer for chunks
+
     while True:
-        msg = await ws.receive_bytes()
+        try:
+            msg = await ws.receive_bytes()
+        except:
+            continue
 
         try:
             text = msg.decode()
         except:
             text = None
 
-        # Start new upload
+        # NEW ID
         if text and text.startswith("NEWID:"):
             current_id = text[6:]
-            buffers[current_id] = b""
+            buffer = b""
             db[current_id] = b""
             await ws.send_text(f"READY:{current_id}")
 
-        # End upload
-        elif text and text.startswith("ENDUPLOAD:"):
-            item_id = text[10:]
-            if item_id in buffers:
-                db[item_id] = buffers[item_id]
-                del buffers[item_id]
-                await ws.send_text(f"ADDED:{item_id}")
-
-        # GET payload
+        # GET
         elif text and text.startswith("GET:"):
             item_id = text[4:]
             if item_id in db and db[item_id]:
                 await ws.send_bytes(db[item_id])
-                await ws.send_text(f"{len(db[item_id])} bytes")
                 await ws.send_text(f"END:{item_id}")
             else:
                 await ws.send_text("ERROR:NOT_FOUND")
 
-        # Payload chunks
+        # ENDUPLOAD
+        elif text and text.startswith("ENDUPLOAD:"):
+            end_id = text[10:]
+            if end_id == current_id:
+                db[current_id] = buffer  # save accumulated chunks
+                await ws.send_text(f"ADDED:{current_id}")
+                buffer = b""  # reset buffer
+            else:
+                await ws.send_text("ERROR:UPLOAD_MISMATCH")
+
+        # Payload chunk
         else:
             if current_id:
-                buffers[current_id] += msg
+                buffer += msg  # accumulate all chunks
