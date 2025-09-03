@@ -24,7 +24,7 @@ async def ws_endpoint(ws: WebSocket):
         if text and text.startswith("NEWID:"):
             current_id = text[6:]
             buffer = b""
-            db[current_id] = b""
+            db[current_id] = b""  # reserve slot
             await ws.send_text(f"READY:{current_id}")
 
         # GET
@@ -36,10 +36,17 @@ async def ws_endpoint(ws: WebSocket):
             else:
                 await ws.send_text("ERROR:NOT_FOUND")
 
+        # ENDUPLOAD
+        elif text and text.startswith("ENDUPLOAD:"):
+            end_id = text[10:]
+            if end_id == current_id:
+                db[current_id] = buffer  # commit accumulated data
+                await ws.send_text(f"ADDED:{current_id}")
+                buffer = b""
+            else:
+                await ws.send_text("ERROR:UPLOAD_MISMATCH")
+
         # Payload chunk
         else:
             if current_id:
                 buffer += msg  # accumulate all chunks
-                # Only set db[current_id] once all chunks are sent
-                # Here we assume the client will send a final "ENDUPLOAD" text message
-            # optional: handle end of upload
