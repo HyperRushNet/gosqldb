@@ -1,14 +1,19 @@
-# Base image
+# Use official Python image
 FROM python:3.11-slim
 
+# Set working directory
 WORKDIR /app
 
-COPY . .
+# Copy files
+COPY requirements.txt .
+COPY main.py .
+COPY frontend ./frontend
 
 # Install dependencies
-RUN pip install --no-cache-dir fastapi==0.116.1 uvicorn[standard]==0.35.0
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Expose port
-ENV PORT=10000
+EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "10000"]
+# Run Uvicorn server
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
