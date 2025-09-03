@@ -1,12 +1,11 @@
 import zlib
 import uuid
-import base64
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
-# Allow frontend from any origin
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,15 +27,13 @@ async def websocket_endpoint(ws: WebSocket):
             cmd = data.get("cmd")
             if cmd == "ADD":
                 item_id = data.get("id") or str(uuid.uuid4())
-                payload_b64 = data.get("payload")
-                compressed = base64.b64decode(payload_b64)
-                db[item_id] = compressed
+                payload = bytes(data.get("payload"), 'latin1')  # receive raw binary as latin1 string
+                db[item_id] = payload
                 await ws.send_text(f"ADDED:{item_id}")
 
             elif cmd == "GET":
                 item_id = data.get("id")
                 if item_id in db:
-                    # Return as binary
                     await ws.send_bytes(db[item_id])
                 else:
                     await ws.send_text("ERROR:NOT_FOUND")
