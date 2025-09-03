@@ -1,5 +1,2 @@
-# requirements.txt
 fastapi==0.116.1
 uvicorn[standard]==0.35.0
-orjson==3.9.12
-aiofiles==23.2.1
