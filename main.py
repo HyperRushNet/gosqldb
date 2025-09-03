@@ -8,19 +8,19 @@ db = {}  # ID -> Base64 string
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
     while True:
-        data = await ws.receive_bytes()
-        if data.startswith(b"ADD:"):
-            payload = data[4:].decode()  # decode as string, not bytes
+        msg = await ws.receive_text()  # altijd text
+        if msg.startswith("ADD:"):
+            payload = msg[4:]  # Base64 LZ string
             item_id = str(uuid.uuid4())
             db[item_id] = payload
             await ws.send_text(f"ADDED:{item_id}")
-        elif data.startswith(b"GET:"):
-            item_id = data[4:].decode()
+        elif msg.startswith("GET:"):
+            item_id = msg[4:]
             if item_id in db:
-                await ws.send_text(db[item_id])  # send as TEXT
+                await ws.send_text(db[item_id])
             else:
                 await ws.send_text("ERROR:NOT_FOUND")
-        elif data.startswith(b"DEL:"):
-            item_id = data[4:].decode()
+        elif msg.startswith("DEL:"):
+            item_id = msg[4:]
             db.pop(item_id, None)
             await ws.send_text(f"DELETED:{item_id}")
