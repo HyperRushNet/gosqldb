@@ -1,50 +1,37 @@
-import uuid
+import zlib, asyncio
 from fastapi import FastAPI, WebSocket
-import zlib
 
 app = FastAPI()
-
-# opslag: ID -> compressed bytes
-db = {}
+db = {}  # id -> compressed bytes
 
 @app.websocket("/ws")
-async def websocket_endpoint(ws: WebSocket):
+async def ws_endpoint(ws: WebSocket):
     await ws.accept()
-    current_add_id = None
+    current_id = None
     buffer = bytearray()
     while True:
         data = await ws.receive()
-        # binaire data
-        if "bytes" in data:
-            if current_add_id:
-                buffer.extend(data["bytes"])
-                db[current_add_id] = bytes(buffer)
-                await ws.send_text(f"ADDED:{current_add_id}")
-                current_add_id = None
-                buffer = bytearray()
-            continue
-
-        # tekst data
         if "text" in data:
             text = data["text"]
             if text.startswith("ADD:"):
-                # format ADD:<client_id>:
-                parts = text.split(":",2)
-                if len(parts) < 3:
-                    await ws.send_text("ERROR:INVALID_ADD")
-                    continue
-                current_add_id = parts[1]
+                current_id = text.split(":",2)[1]
                 buffer = bytearray()
             elif text.startswith("GET:"):
                 item_id = text[4:]
                 if item_id in db:
-                    await ws.send_bytes(db[item_id])
+                    chunk_size = 256*1024
+                    for i in range(0,len(db[item_id]),chunk_size):
+                        await ws.send_bytes(db[item_id][i:i+chunk_size])
+                        await asyncio.sleep(0)  # yield
                 else:
                     await ws.send_text("ERROR:NOT_FOUND")
             elif text.startswith("DEL:"):
-                item_id = text[4:]
-                db.pop(item_id,None)
-                await ws.send_text(f"DELETED:{item_id}")
-            elif text.startswith("LIST"):
-                ids = ",".join(db.keys())
-                await ws.send_text(f"LIST:{ids}")
+                db.pop(text[4:],None)
+                await ws.send_text(f"DELETED:{text[4:]}")
+        elif "bytes" in data:
+            if current_id:
+                buffer.extend(data["bytes"])
+                db[current_id]=bytes(buffer)
+                await ws.send_text(f"ADDED:{current_id}")
+                current_id=None
+                buffer=bytearray()
