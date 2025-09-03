@@ -41,6 +41,7 @@ function genRandomPayload(size){
     return buf;
 }
 
+// Detect ws/wss automatically
 function getWSUrl() {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     return `${proto}://${location.host}/ws`;
