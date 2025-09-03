@@ -1,42 +1,38 @@
-from fastapi import FastAPI, HTTPException, UploadFile, Form
+from fastapi import FastAPI, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from sqlalchemy import Column, Integer, String, LargeBinary, create_engine, MetaData, Table
-from databases import Database
+from pydantic import BaseModel
+import databases
+import sqlalchemy
 import datetime
 
-DATABASE_URL = "sqlite:///./data.db"
-database = Database(DATABASE_URL)
-metadata = MetaData()
+DATABASE_URL = "sqlite:///./test.db"
 
-# Table definition
-data_table = Table(
-    "data",
+database = databases.Database(DATABASE_URL)
+metadata = sqlalchemy.MetaData()
+
+items = sqlalchemy.Table(
+    "items",
     metadata,
-    Column("id", String, primary_key=True),
-    Column("content", LargeBinary),
-    Column("created_at", String)
+    sqlalchemy.Column("id", sqlalchemy.String, primary_key=True),
+    sqlalchemy.Column("content", sqlalchemy.Text),
+    sqlalchemy.Column("created_at", sqlalchemy.DateTime, default=datetime.datetime.utcnow),
 )
 
-engine = create_engine(DATABASE_URL)
+engine = sqlalchemy.create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 metadata.create_all(engine)
 
 app = FastAPI()
-
-# ----------------------
-# CORS
-# ----------------------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ----------------------
-# Startup/Shutdown
-# ----------------------
+class Item(BaseModel):
+    id: str
+    content: str
+
 @app.on_event("startup")
 async def startup():
     await database.connect()
@@ -45,49 +41,22 @@ async def startup():
 async def shutdown():
     await database.disconnect()
 
-# ----------------------
-# Ping endpoint
-# ----------------------
-@app.get("/ping")
-async def ping():
-    return {"status": "ok"}
-
-# ----------------------
-# Upload data
-# ----------------------
-@app.post("/upload")
-async def upload_data(id: str = Form(...), file: UploadFile = None, text: str = Form(None)):
-    if file:
-        content = await file.read()
-    elif text:
-        content = text.encode()
-    else:
-        raise HTTPException(status_code=400, detail="No content provided")
-
-    query = data_table.insert().values(
-        id=id,
-        content=content,
-        created_at=str(datetime.datetime.utcnow())
-    )
+@app.post("/add")
+async def add_item(item: Item):
+    query = items.insert().values(id=item.id, content=item.content, created_at=datetime.datetime.utcnow())
     await database.execute(query)
-    return {"message": f"Data stored under ID {id}"}
+    return {"status": "ok", "id": item.id}
 
-# ----------------------
-# Get data by ID
-# ----------------------
-@app.get("/data/{id}")
-async def get_data(id: str):
-    query = data_table.select().where(data_table.c.id == id)
+@app.get("/get/{item_id}")
+async def get_item(item_id: str):
+    query = items.select().where(items.c.id == item_id)
     row = await database.fetch_one(query)
-    if not row:
-        raise HTTPException(status_code=404, detail="ID not found")
-    return {"id": row["id"], "content": row["content"].decode(), "created_at": row["created_at"]}
+    if row:
+        return {"id": row["id"], "content": row["content"], "created_at": row["created_at"]}
+    return {"error": "Item not found"}
 
-# ----------------------
-# List all IDs
-# ----------------------
-@app.get("/ids")
-async def list_ids():
-    query = data_table.select()
+@app.get("/all")
+async def get_all_items():
+    query = items.select()
     rows = await database.fetch_all(query)
-    return {"ids": [row["id"] for row in rows]}
+    return [{"id": row["id"], "content": row["content"], "created_at": row["created_at"]} for row in rows]
