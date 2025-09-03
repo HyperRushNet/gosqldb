@@ -3,7 +3,6 @@ import logging
 
 app = FastAPI()
 db = {}  # id -> compressed bytes
-
 logging.basicConfig(level=logging.INFO)
 
 @app.websocket("/ws")
@@ -16,11 +15,7 @@ async def websocket_endpoint(ws: WebSocket):
 
     try:
         while True:
-            try:
-                msg = await ws.receive()
-            except Exception as e:
-                logging.error(f"Error receiving message: {e}")
-                continue
+            msg = await ws.receive()
 
             # Binary chunk
             if msg["type"] == "websocket.bytes":
@@ -63,6 +58,12 @@ async def websocket_endpoint(ws: WebSocket):
                     else:
                         await ws.send_text("ERROR:UPLOAD_MISMATCH")
                         logging.warning(f"ENDUPLOAD mismatch: {end_id} vs {current_id}")
+
+                # LIST all IDs
+                elif text == "LIST":
+                    ids = ",".join(db.keys())
+                    await ws.send_text(f"IDS:{ids}")
+                    logging.info(f"LIST sent: {ids}")
 
                 # Echo any other text
                 else:
