@@ -4,8 +4,9 @@ from pydantic import BaseModel
 import databases
 import sqlalchemy
 import datetime
+import zlib
 
-DATABASE_URL = "sqlite:///./test.db"
+DATABASE_URL = "sqlite:///./data.db"
 
 database = databases.Database(DATABASE_URL)
 metadata = sqlalchemy.MetaData()
@@ -14,11 +15,13 @@ items = sqlalchemy.Table(
     "items",
     metadata,
     sqlalchemy.Column("id", sqlalchemy.String, primary_key=True),
-    sqlalchemy.Column("content", sqlalchemy.Text),
+    sqlalchemy.Column("content", sqlalchemy.LargeBinary),  # Gecomprimeerde BLOB
     sqlalchemy.Column("created_at", sqlalchemy.DateTime, default=datetime.datetime.utcnow),
 )
 
-engine = sqlalchemy.create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+engine = sqlalchemy.create_engine(
+    DATABASE_URL, connect_args={"check_same_thread": False}
+)
 metadata.create_all(engine)
 
 app = FastAPI()
@@ -44,7 +47,12 @@ async def shutdown():
 # Voeg item toe
 @app.post("/add")
 async def add_item(item: Item):
-    query = items.insert().values(id=item.id, content=item.content, created_at=datetime.datetime.utcnow())
+    compressed = zlib.compress(item.content.encode("utf-8"))
+    query = items.insert().values(
+        id=item.id,
+        content=compressed,
+        created_at=datetime.datetime.utcnow()
+    )
     await database.execute(query)
     return {"status": "ok", "id": item.id}
 
@@ -55,13 +63,14 @@ async def get_ids():
     rows = await database.fetch_all(query)
     return [row["id"] for row in rows]
 
-# Content van item als pure text
+# Content van item
 @app.get("/items/{item_id}")
 async def get_item_content(item_id: str):
     query = items.select().where(items.c.id == item_id)
     row = await database.fetch_one(query)
     if row:
-        return row["content"]
+        decompressed = zlib.decompress(row["content"]).decode("utf-8")
+        return decompressed
     raise HTTPException(status_code=404, detail="Item not found")
 
 # Metadata van item
