@@ -1,0 +1,9 @@
+# Hi there! This is the cors.txt file.
+# Add allowed domains for Cross-Origin Resource Sharing (CORS) to control access.
+# A '*' means ALL domains on the web are allowed.
+# To add a new domain, just add it on a new line.
+# Lines starting with '#' are ignored.
+
+https://hyperrushnet.github.io
+
+# Use '*' to allow all domains
