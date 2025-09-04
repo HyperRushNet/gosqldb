@@ -5,6 +5,7 @@ import databases
 import sqlalchemy
 import datetime
 import zlib
+from fastapi.responses import StreamingResponse
 
 DATABASE_URL = "sqlite:///./data.db"
 
@@ -63,15 +64,24 @@ async def get_ids():
     rows = await database.fetch_all(query)
     return [row["id"] for row in rows]
 
-# Content van item
+# Stream content van item (RAM-efficient)
 @app.get("/items/{item_id}")
 async def get_item_content(item_id: str):
     query = items.select().where(items.c.id == item_id)
     row = await database.fetch_one(query)
-    if row:
-        decompressed = zlib.decompress(row["content"]).decode("utf-8")
-        return decompressed
-    raise HTTPException(status_code=404, detail="Item not found")
+    if not row:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    compressed = row["content"]
+
+    def decompress_chunks(data, chunk_size=65536):
+        decompress_obj = zlib.decompressobj()
+        for i in range(0, len(data), chunk_size):
+            chunk = data[i:i+chunk_size]
+            yield decompress_obj.decompress(chunk)
+        yield decompress_obj.flush()
+
+    return StreamingResponse(decompress_chunks(compressed), media_type="text/plain")
 
 # Metadata van item
 @app.get("/items/{item_id}/info")
