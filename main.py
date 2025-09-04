@@ -4,7 +4,6 @@ from pydantic import BaseModel
 import databases
 import sqlalchemy
 import datetime
-import zlib
 from fastapi.responses import StreamingResponse
 
 DATABASE_URL = "sqlite:///./data.db"
@@ -16,7 +15,7 @@ items = sqlalchemy.Table(
     "items",
     metadata,
     sqlalchemy.Column("id", sqlalchemy.String, primary_key=True),
-    sqlalchemy.Column("content", sqlalchemy.LargeBinary),  # Gecomprimeerde BLOB
+    sqlalchemy.Column("content", sqlalchemy.LargeBinary),  # Opslag on-compressed voor snelheid
     sqlalchemy.Column("created_at", sqlalchemy.DateTime, default=datetime.datetime.utcnow),
 )
 
@@ -48,10 +47,9 @@ async def shutdown():
 # Voeg item toe
 @app.post("/add")
 async def add_item(item: Item):
-    compressed = zlib.compress(item.content.encode("utf-8"))
     query = items.insert().values(
         id=item.id,
-        content=compressed,
+        content=item.content.encode("utf-8"),  # direct bytes
         created_at=datetime.datetime.utcnow()
     )
     await database.execute(query)
@@ -64,7 +62,7 @@ async def get_ids():
     rows = await database.fetch_all(query)
     return [row["id"] for row in rows]
 
-# Stream content van item (RAM-efficient, grotere chunks)
+# Stream content van item (RAM-efficient)
 @app.get("/items/{item_id}")
 async def get_item_content(item_id: str):
     query = items.select().where(items.c.id == item_id)
@@ -72,16 +70,13 @@ async def get_item_content(item_id: str):
     if not row:
         raise HTTPException(status_code=404, detail="Item not found")
 
-    compressed = row["content"]
+    content = row["content"]
 
-    def decompress_chunks(data, chunk_size=524288):  # 512 KB chunks
-        decompress_obj = zlib.decompressobj()
+    def stream_chunks(data, chunk_size=524288):  # 512 KB
         for i in range(0, len(data), chunk_size):
-            chunk = data[i:i+chunk_size]
-            yield decompress_obj.decompress(chunk)
-        yield decompress_obj.flush()
+            yield data[i:i+chunk_size]
 
-    return StreamingResponse(decompress_chunks(compressed), media_type="text/plain")
+    return StreamingResponse(stream_chunks(content), media_type="application/octet-stream")
 
 # Metadata van item
 @app.get("/items/{item_id}/info")
