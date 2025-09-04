@@ -64,7 +64,7 @@ async def get_ids():
     rows = await database.fetch_all(query)
     return [row["id"] for row in rows]
 
-# Stream content van item (RAM-efficient)
+# Stream content van item (RAM-efficient, grotere chunks)
 @app.get("/items/{item_id}")
 async def get_item_content(item_id: str):
     query = items.select().where(items.c.id == item_id)
@@ -74,7 +74,7 @@ async def get_item_content(item_id: str):
 
     compressed = row["content"]
 
-    def decompress_chunks(data, chunk_size=65536):
+    def decompress_chunks(data, chunk_size=524288):  # 512 KB chunks
         decompress_obj = zlib.decompressobj()
         for i in range(0, len(data), chunk_size):
             chunk = data[i:i+chunk_size]
