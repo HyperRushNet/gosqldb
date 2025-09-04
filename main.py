@@ -5,26 +5,27 @@ import databases
 import sqlalchemy
 import datetime
 from fastapi.responses import StreamingResponse
+from sqlalchemy import text
 
 DATABASE_URL = "sqlite:///./data.db"
 
 database = databases.Database(DATABASE_URL)
 metadata = sqlalchemy.MetaData()
 
-# Optimaliseer SQLite voor concurrent access
 engine = sqlalchemy.create_engine(
     DATABASE_URL, connect_args={"check_same_thread": False}
 )
-with engine.connect() as conn:
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA synchronous=NORMAL;")
 
-# Items tabel
+# SQLite optimalisatie
+with engine.connect() as conn:
+    conn.execute(text("PRAGMA journal_mode=WAL;"))
+    conn.execute(text("PRAGMA synchronous=NORMAL;"))
+
 items = sqlalchemy.Table(
     "items",
     metadata,
     sqlalchemy.Column("id", sqlalchemy.String, primary_key=True),
-    sqlalchemy.Column("content", sqlalchemy.Text),  # UTF16 LZString
+    sqlalchemy.Column("content", sqlalchemy.Text),  # LZString UTF16
     sqlalchemy.Column("created_at", sqlalchemy.DateTime, default=datetime.datetime.utcnow),
 )
 
@@ -40,7 +41,7 @@ app.add_middleware(
 
 class Item(BaseModel):
     id: str
-    content: str  # LZString compressed
+    content: str  # compressed via LZString UTF16
 
 @app.on_event("startup")
 async def startup():
@@ -50,7 +51,6 @@ async def startup():
 async def shutdown():
     await database.disconnect()
 
-# Voeg item toe
 @app.post("/add")
 async def add_item(item: Item):
     query = items.insert().values(
@@ -61,14 +61,12 @@ async def add_item(item: Item):
     await database.execute(query)
     return {"status": "ok", "id": item.id}
 
-# Lijst van IDs
 @app.get("/items")
 async def get_ids():
     query = items.select().with_only_columns(items.c.id)
     rows = await database.fetch_all(query)
     return [row["id"] for row in rows]
 
-# Content van item (streaming, RAM-efficient)
 @app.get("/items/{item_id}")
 async def get_item_content(item_id: str):
     query = items.select().where(items.c.id == item_id)
@@ -78,13 +76,12 @@ async def get_item_content(item_id: str):
 
     content = row["content"]
 
-    def stream_chunks(data, chunk_size=524288):  # 512 KB
+    def stream_chunks(data, chunk_size=524288):
         for i in range(0, len(data), chunk_size):
             yield data[i:i+chunk_size]
 
     return StreamingResponse(stream_chunks(content), media_type="text/plain")
 
-# Metadata van item
 @app.get("/items/{item_id}/info")
 async def get_item_info(item_id: str):
     query = items.select().where(items.c.id == item_id)
@@ -93,7 +90,6 @@ async def get_item_info(item_id: str):
         return {"id": row["id"], "created_at": row["created_at"]}
     raise HTTPException(status_code=404, detail="Item not found")
 
-# Delete item
 @app.delete("/items/{item_id}")
 async def delete_item(item_id: str):
     query = items.delete().where(items.c.id == item_id)
