@@ -11,17 +11,23 @@ DATABASE_URL = "sqlite:///./data.db"
 database = databases.Database(DATABASE_URL)
 metadata = sqlalchemy.MetaData()
 
+# Optimaliseer SQLite voor concurrent access
+engine = sqlalchemy.create_engine(
+    DATABASE_URL, connect_args={"check_same_thread": False}
+)
+with engine.connect() as conn:
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA synchronous=NORMAL;")
+
+# Items tabel
 items = sqlalchemy.Table(
     "items",
     metadata,
     sqlalchemy.Column("id", sqlalchemy.String, primary_key=True),
-    sqlalchemy.Column("content", sqlalchemy.LargeBinary),  # Opslag on-compressed voor snelheid
+    sqlalchemy.Column("content", sqlalchemy.Text),  # UTF16 LZString
     sqlalchemy.Column("created_at", sqlalchemy.DateTime, default=datetime.datetime.utcnow),
 )
 
-engine = sqlalchemy.create_engine(
-    DATABASE_URL, connect_args={"check_same_thread": False}
-)
 metadata.create_all(engine)
 
 app = FastAPI()
@@ -34,7 +40,7 @@ app.add_middleware(
 
 class Item(BaseModel):
     id: str
-    content: str
+    content: str  # LZString compressed
 
 @app.on_event("startup")
 async def startup():
@@ -49,7 +55,7 @@ async def shutdown():
 async def add_item(item: Item):
     query = items.insert().values(
         id=item.id,
-        content=item.content.encode("utf-8"),  # direct bytes
+        content=item.content,
         created_at=datetime.datetime.utcnow()
     )
     await database.execute(query)
@@ -62,7 +68,7 @@ async def get_ids():
     rows = await database.fetch_all(query)
     return [row["id"] for row in rows]
 
-# Stream content van item (RAM-efficient)
+# Content van item (streaming, RAM-efficient)
 @app.get("/items/{item_id}")
 async def get_item_content(item_id: str):
     query = items.select().where(items.c.id == item_id)
@@ -76,7 +82,7 @@ async def get_item_content(item_id: str):
         for i in range(0, len(data), chunk_size):
             yield data[i:i+chunk_size]
 
-    return StreamingResponse(stream_chunks(content), media_type="application/octet-stream")
+    return StreamingResponse(stream_chunks(content), media_type="text/plain")
 
 # Metadata van item
 @app.get("/items/{item_id}/info")
