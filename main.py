@@ -1,16 +1,16 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import databases
 import sqlalchemy
 import datetime
-from fastapi.responses import StreamingResponse
 import os, hashlib, base64, hmac, asyncio
 import logging
 
 DATABASE_URL = "sqlite+aiosqlite:///./data.db"
 database = databases.Database(DATABASE_URL)
 metadata = sqlalchemy.MetaData()
+
 engine = sqlalchemy.create_engine(
     "sqlite:///./data.db",
     connect_args={"check_same_thread": False},
@@ -74,11 +74,14 @@ async def verify_password(password: str, hashed_str: str) -> bool:
     return await asyncio.to_thread(_verify_password_sync, password, hashed_str)
 
 def _verify_password_sync(password: str, hashed_str: str) -> bool:
-    data = base64.b64decode(hashed_str.encode("utf-8"))
-    salt = data[:16]
-    stored_hash = data[16:]
-    check_hash = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100_000)
-    return hmac.compare_digest(stored_hash, check_hash)
+    try:
+        data = base64.b64decode(hashed_str.encode("utf-8"))
+        salt = data[:16]
+        stored_hash = data[16:]
+        check_hash = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100_000)
+        return hmac.compare_digest(stored_hash, check_hash)
+    except Exception:
+        return False
 
 @app.on_event("startup")
 async def startup():
@@ -90,17 +93,26 @@ async def shutdown():
     await database.disconnect()
     logger.info("Database disconnected")
 
-@app.get("/ping")
+@app.get("/ping", include_in_schema=False)
 async def ping():
-    return {"status": "ok"}
+    return Response(status_code=204)
 
 @app.post("/rooms", response_model=dict)
 async def create_room(room: Room):
+    exists = await database.fetch_one(rooms.select().where(rooms.c.id == room.id))
+    if exists:
+        raise HTTPException(400, "Room already exists")
     await database.execute(rooms.insert().values(id=room.id, name=room.name))
     return {"status":"ok","id":room.id}
 
 @app.post("/rooms/{room_id}/items", response_model=dict)
 async def add_item(room_id: str, item: Item):
+    room_exists = await database.fetch_one(rooms.select().where(rooms.c.id == room_id))
+    if not room_exists:
+        raise HTTPException(404, "Room not found")
+    item_exists = await database.fetch_one(items.select().where(items.c.id == item.id, items.c.room_id == room_id))
+    if item_exists:
+        raise HTTPException(400, "Item already exists in this room")
     pw_hash = await hash_password(item.password) if item.password else None
     await database.execute(items.insert().values(
         id=item.id, room_id=room_id, content=item.content,
@@ -110,36 +122,36 @@ async def add_item(room_id: str, item: Item):
 
 @app.get("/rooms/{room_id}/items", response_model=list[str])
 async def list_items(room_id: str):
+    room_exists = await database.fetch_one(rooms.select().where(rooms.c.id == room_id))
+    if not room_exists:
+        raise HTTPException(404, "Room not found")
     rows = await database.fetch_all(items.select().where(items.c.room_id == room_id).with_only_columns(items.c.id))
     return [r["id"] for r in rows]
 
-@app.get("/rooms/{room_id}/items/{item_id}", response_class=StreamingResponse)
+@app.get("/rooms/{room_id}/items/{item_id}", response_class=Response)
 async def get_item(room_id: str, item_id: str, password: str | None = None):
     row = await database.fetch_one(items.select().where(items.c.id == item_id, items.c.room_id == room_id))
     if not row: raise HTTPException(404, "Item not found")
-    if row["password_hash"]:
-        if not password or not await verify_password(password, row["password_hash"]):
-            raise HTTPException(403, "Wrong password")
-    def stream_chunks(data: str, chunk_size: int = 524288):
-        for i in range(0, len(data), chunk_size): yield data[i:i+chunk_size]
-    return StreamingResponse(stream_chunks(row["content"]), media_type="text/plain")
+    if row["password_hash"] and not password:
+        raise HTTPException(403, "Password required")
+    if row["password_hash"] and password and not await verify_password(password, row["password_hash"]):
+        raise HTTPException(403, "Wrong password")
+    return Response(content=row["content"], media_type="text/plain")
 
 @app.get("/rooms/{room_id}/items/{item_id}/info", response_model=dict)
 async def get_item_info(room_id: str, item_id: str, password: str | None = None):
     row = await database.fetch_one(items.select().where(items.c.id == item_id, items.c.room_id == room_id))
     if not row: raise HTTPException(404, "Item not found")
-    if row["password_hash"]:
-        if not password or not await verify_password(password, row["password_hash"]):
-            raise HTTPException(403, "Wrong password")
+    if row["password_hash"] and password and not await verify_password(password, row["password_hash"]):
+        raise HTTPException(403, "Wrong password")
     return {"id": row["id"], "created_at": row["created_at"], "has_password": bool(row["password_hash"])}
 
 @app.put("/rooms/{room_id}/items/{item_id}/edit", response_model=dict)
 async def edit_item(room_id: str, item_id: str, content: str, password: str | None = None):
     row = await database.fetch_one(items.select().where(items.c.id == item_id, items.c.room_id == room_id))
     if not row: raise HTTPException(404, "Item not found")
-    if row["password_hash"]:
-        if not password or not await verify_password(password, row["password_hash"]):
-            raise HTTPException(403, "Wrong password")
+    if row["password_hash"] and password and not await verify_password(password, row["password_hash"]):
+        raise HTTPException(403, "Wrong password")
     await database.execute(items.update().where(items.c.id == item_id, items.c.room_id == room_id).values(content=content))
     return {"status":"ok","id":item_id}
 
@@ -147,8 +159,7 @@ async def edit_item(room_id: str, item_id: str, content: str, password: str | No
 async def delete_item(room_id: str, item_id: str, password: str | None = None):
     row = await database.fetch_one(items.select().where(items.c.id == item_id, items.c.room_id == room_id))
     if not row: raise HTTPException(404, "Item not found")
-    if row["password_hash"]:
-        if not password or not await verify_password(password, row["password_hash"]):
-            raise HTTPException(403, "Wrong password")
+    if row["password_hash"] and password and not await verify_password(password, row["password_hash"]):
+        raise HTTPException(403, "Wrong password")
     await database.execute(items.delete().where(items.c.id == item_id, items.c.room_id == room_id))
     return {"status":"deleted","id":item_id}
