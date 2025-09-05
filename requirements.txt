@@ -4,4 +4,3 @@ python-multipart
 databases[sqlite]
 sqlalchemy
 pydantic
-passlib[bcrypt]
