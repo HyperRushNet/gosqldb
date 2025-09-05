@@ -4,6 +4,6 @@
 # To add a new domain, just add it on a new line.
 # Lines starting with '#' are ignored.
 
-https://hyperrushnet.github.io
+*
 
 # Use '*' to allow all domains
